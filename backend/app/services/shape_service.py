@@ -4,6 +4,7 @@ from pathlib import Path
 from app.services.svg_parser import sample_svg_path
 from app.services.geo_scaler import scale_to_gps
 from app.services.map_matcher import snap_to_roads
+from app.services.llm_service import generate_svg_from_prompt
 from app.services.osrm_router import snap_to_roads_osrm
 from app.config import settings
 
@@ -63,18 +64,29 @@ def calculate_score(result: dict, target_distance_km: float, strategy: dict) -> 
     return final_score
 
 async def generate_route_from_shape(
-    shape_id: str,
+    shape_id: str | None,
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    prompt: str | None = None
 ) -> dict:
-    """V1: Generate route from predefined shape with Metric-Driven Selection."""
-    shapes = load_shapes()
+    """V1: Generate route from predefined shape OR custom prompt."""
     
-    if shape_id not in shapes:
-        raise ValueError(f"Unknown shape: {shape_id}")
-    
-    svg_path = shapes[shape_id]["svg_path"]
+    # Logic Branch: Custom vs Predefined
+    if prompt:
+        print(f"✨ Custom Prompt: {prompt}")
+        svg_path = generate_svg_from_prompt(prompt, distance_km)
+        shape_name = f"Custom: {prompt}"
+        current_shape_id = "custom"
+    elif shape_id:
+        shapes = load_shapes()
+        if shape_id not in shapes:
+            raise ValueError(f"Unknown shape: {shape_id}")
+        svg_path = shapes[shape_id]["svg_path"]
+        shape_name = shapes[shape_id]["name"]
+        current_shape_id = shape_id
+    else:
+        raise ValueError("No shape specified")
     
     # Calculate distance-proportional radius
     # Higher multiplier = more flexibility, less overlap
@@ -112,7 +124,7 @@ async def generate_route_from_shape(
     scale_factor = 1.0
     best_overall = None
     
-    print(f"🔄 Generating '{shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
+    print(f"🔄 Generating '{current_shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
     
     for iteration in range(MAX_ITERATIONS):
         successful_results = []
@@ -296,6 +308,16 @@ async def generate_route_osrm(
             # Route using OSRM
             result = await snap_to_roads_osrm(gps_points, profile="foot")
             
+            result_data = {
+                "shape_id": current_shape_id,
+                "shape_name": shape_name,
+                "svg_path": svg_path,
+                "original_points": abstract_points,
+                "gps_points": gps_points,
+                "score": score,
+                "strategy": strategy,
+                **result
+            }
             # --- QUALITY CHECKS ---
             failed_ratio = result.get("failed_segments", 0) / result.get("total_segments", 1)
             actual_km = result["distance_m"] / 1000.0

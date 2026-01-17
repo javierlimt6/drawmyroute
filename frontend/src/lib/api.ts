@@ -1,7 +1,8 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export interface RouteRequest {
-  shape_id: string;
+  shape_id?: string;
+  prompt?: string;
   start_lat: number;
   start_lng: number;
   distance_km: number;
@@ -10,6 +11,7 @@ export interface RouteRequest {
 export interface RouteResponse {
   shape_id: string;
   shape_name: string;
+  svg_path: string;
   route: GeoJSON.LineString;
   distance_m: number;
   duration_s: number;

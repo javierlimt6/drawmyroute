@@ -152,6 +152,7 @@ export default function Home() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRoute, setGeneratedRoute] =
     useState<GeoJSON.LineString | null>(null);
+  const [generatedSvg, setGeneratedSvg] = useState<string | null>(null);
   const [routeStats, setRouteStats] = useState<{
     distance_m: number;
     duration_s: number;
@@ -263,15 +264,19 @@ export default function Home() {
     setError(null);
 
     try {
-      const shapeId = selectedShape || "heart"; // Default to heart if no shape selected
-      const result = await generateRoute({
-        shape_id: shapeId,
+      const requestPayload = {
         start_lat: latitude,
         start_lng: longitude,
         distance_km: distance,
-      });
+        ...(mode === "type" && prompt.trim()
+          ? { prompt: prompt.trim() }
+          : { shape_id: selectedShape || "heart" }),
+      };
+
+      const result = await generateRoute(requestPayload);
 
       setGeneratedRoute(result.route);
+      setGeneratedSvg(result.svg_path);
       setRouteStats({
         distance_m: result.distance_m,
         duration_s: result.duration_s,
@@ -353,6 +358,7 @@ export default function Home() {
               onClick={() => {
                 setShowModal(true);
                 setGeneratedRoute(null);
+                setGeneratedSvg(null);
                 setRouteStats(null);
                 setError(null);
               }}
@@ -853,6 +859,50 @@ export default function Home() {
                 Your Route is Ready! 🎉
               </Title>
 
+              {/* SVG Preview */}
+              {generatedSvg && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: 20,
+                    background: "#f9f9f9",
+                    borderRadius: 12,
+                    padding: 10,
+                  }}
+                >
+                  <svg
+                    viewBox="0 0 100 100"
+                    width="80"
+                    height="80"
+                    style={{ transform: "scaleY(-1)", overflow: "visible" }}
+                  >
+                    <path
+                      d={generatedSvg}
+                      fill="none"
+                      stroke={STRAVA_ORANGE}
+                      strokeWidth="2"
+                    />
+                  </svg>
+                  <div
+                    style={{
+                      marginLeft: 16,
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ fontSize: 11, color: "#888" }}>
+                      Original AI Shape
+                    </Text>
+                    <Text strong>
+                      {prompt || selectedShape || "Custom Shape"}
+                    </Text>
+                  </div>
+                </div>
+              )}
+
               {/* Stats Row */}
               <div style={{ display: "flex", gap: 24, marginBottom: 20 }}>
                 <div>
@@ -940,6 +990,7 @@ export default function Home() {
                   onClick={() => {
                     setShowModal(true);
                     setGeneratedRoute(null);
+                    setGeneratedSvg(null);
                   }}
                 >
                   Generate New Route

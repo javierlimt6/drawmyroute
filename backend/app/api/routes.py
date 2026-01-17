@@ -17,7 +17,8 @@ async def generate_route_endpoint(request: RouteRequest):
             shape_id=request.shape_id,
             start_lat=request.start_lat,
             start_lng=request.start_lng,
-            distance_km=request.distance_km
+            distance_km=request.distance_km,
+            prompt=request.prompt
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
