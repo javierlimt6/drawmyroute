@@ -4,11 +4,21 @@ def scale_to_gps(
     points: list[tuple[float, float]],
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    scale_factor: float = 1.0,  # Multiplier to adjust size
+    rotation_deg: float = 0.0   # Rotation in degrees (0, 45, 90, 135)
 ) -> list[tuple[float, float]]:
     """
     Convert 0-100 abstract coordinates to GPS coordinates.
-    Uses dynamic longitude scaling to prevent distortion.
+    Supports rotation and scaling for multi-variant optimization.
+    
+    Args:
+        points: Abstract shape points
+        start_lat: Starting latitude
+        start_lng: Starting longitude
+        distance_km: Target route distance in km
+        scale_factor: Multiplier to adjust shape size
+        rotation_deg: Rotation angle in degrees (clockwise)
     """
     # 1. Normalize points to 0-1 range based on bounding box
     xs = [p[0] for p in points]
@@ -29,48 +39,39 @@ def scale_to_gps(
         for p in points
     ]
     
-    # 2. Calculate scaling factors
-    # Earth radius approximation (km)
-    R = 6378.137
+    # 2. Apply rotation if specified
+    if rotation_deg != 0:
+        rad = math.radians(rotation_deg)
+        cos_r, sin_r = math.cos(rad), math.sin(rad)
+        normalized = [
+            (nx * cos_r - ny * sin_r, nx * sin_r + ny * cos_r)
+            for nx, ny in normalized
+        ]
     
-    # Degrees per km (latitude is constant-ish)
+    # 3. Calculate scaling factors
     deg_per_km_lat = 1 / 111.32
-    
-    # Degrees per km (longitude depends on latitude)
-    # Use start_lat for the conversion
     lat_rad = math.radians(start_lat)
     deg_per_km_lng = 1 / (111.32 * math.cos(lat_rad))
     
-    # Calculate bounding box diagonal in abstract space (hypotenuse)
-    # We want this diagonal to roughly match the requested distance
-    # Factor 6.0: accounts for road-snapping expansion (perimeter ~6x diagonal for complex shapes)
-    target_diagonal_km = distance_km / 6.0
+    # Target diagonal with scale factor
+    target_diagonal_km = (distance_km / 4.0) * scale_factor
     
-    # Apply scaling
+    # 4. Apply scaling to GPS
     gps_points = []
-    for nx, ny in normalized:
-        # Scale x (width) and y (height) relative to target size
-        # Since we normalized to 0-1, we simply multiply by target size in degrees
-        
-        # We assume the abstract shape is "square" in aspect ratio for simplicity of scaling,
-        # preserving the original aspect ratio of the SVG.
-        
-        # Calculate offsets in km
-        # Maintain aspect ratio: width/height ratio from SVG
-        aspect_ratio = width / height
-        
-        if aspect_ratio > 1:
-            # Wider than tall
-            scale_x_km = target_diagonal_km
-            scale_y_km = target_diagonal_km / aspect_ratio
-        else:
-            # Taller than wide
-            scale_y_km = target_diagonal_km
-            scale_x_km = target_diagonal_km * aspect_ratio
+    aspect_ratio = width / height
+    
+    if aspect_ratio > 1:
+        scale_x_km = target_diagonal_km
+        scale_y_km = target_diagonal_km / aspect_ratio
+    else:
+        scale_y_km = target_diagonal_km
+        scale_x_km = target_diagonal_km * aspect_ratio
 
+    for nx, ny in normalized:
         lat_offset = ny * scale_y_km * deg_per_km_lat
         lng_offset = nx * scale_x_km * deg_per_km_lng
-        
         gps_points.append((start_lat + lat_offset, start_lng + lng_offset))
     
     return gps_points
+
+
