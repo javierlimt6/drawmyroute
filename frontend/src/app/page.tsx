@@ -1,103 +1,175 @@
 "use client";
 
 import MapComponent from "@/components/Map";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useLocation } from "@/hooks/use-location";
-import { MapPin, PenTool, Type, Loader2 } from "lucide-react";
-import clsx from "clsx";
+import { 
+  Card, 
+  Typography, 
+  Segmented, 
+  Input, 
+  Button, 
+  Space, 
+  Alert,
+  ConfigProvider,
+  theme
+} from "antd";
+import { 
+  EnvironmentOutlined, 
+  EditOutlined, 
+  FontSizeOutlined,
+  LoadingOutlined,
+  CheckCircleOutlined,
+  RocketOutlined
+} from "@ant-design/icons";
 
-type InputMode = 'draw' | 'type';
+const { Title, Text } = Typography;
+const { TextArea } = Input;
+
+type InputMode = "draw" | "type";
 
 export default function Home() {
-  const [mode, setMode] = useState<InputMode>('type');
+  const [mode, setMode] = useState<InputMode>("type");
   const [prompt, setPrompt] = useState("");
-  const { latitude, longitude, error, loading: locationLoading, getCurrentLocation } = useLocation();
-
-  // Auto-locate on mount (optional, maybe better on button click?)
-  // Let's do it on button click to be polite.
+  const { latitude, error, loading: locationLoading, getCurrentLocation } = useLocation();
 
   return (
-    <main className="relative w-full h-full min-h-screen">
-      <MapComponent />
-      
-      {/* Overlay UI Container */}
-      <div className="absolute top-4 left-4 right-4 z-10 flex flex-col gap-4 max-w-md mx-auto sm:mx-0 sm:left-4 sm:right-auto pointer-events-none">
-         <div className="bg-white/95 backdrop-blur-md p-5 rounded-2xl shadow-xl border border-zinc-200 pointer-events-auto transition-all duration-300 ease-in-out">
-            <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-1">
+    <ConfigProvider
+      theme={{
+        algorithm: theme.defaultAlgorithm,
+        token: {
+          colorPrimary: "#1677ff",
+          borderRadius: 8,
+        },
+      }}
+    >
+      <main className="relative w-full h-full min-h-screen">
+        <MapComponent />
+
+        {/* Overlay UI Container */}
+        <div
+          style={{
+            position: "absolute",
+            top: 16,
+            left: 16,
+            zIndex: 10,
+            maxWidth: 380,
+            pointerEvents: "none",
+          }}
+        >
+          <Card
+            style={{
+              pointerEvents: "auto",
+              backdropFilter: "blur(12px)",
+              background: "rgba(255, 255, 255, 0.95)",
+            }}
+            styles={{ body: { padding: 20 } }}
+          >
+            <Title
+              level={4}
+              style={{
+                marginBottom: 4,
+                background: "linear-gradient(90deg, #1677ff, #722ed1)",
+                WebkitBackgroundClip: "text",
+                WebkitTextFillColor: "transparent",
+              }}
+            >
               PathArt
-            </h1>
-            <p className="text-xs text-zinc-500 mb-4 font-medium uppercase tracking-wider">
-              AI-Powered Route Designer
-            </p>
-            
+            </Title>
+            <Text type="secondary" style={{ fontSize: 11, letterSpacing: 1 }}>
+              AI-POWERED ROUTE DESIGNER
+            </Text>
+
             {/* Mode Toggles */}
-            <div className="flex bg-zinc-100 p-1 rounded-lg mb-4">
-               <button 
-                  onClick={() => setMode('type')}
-                  className={clsx(
-                    "flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all duration-200",
-                    mode === 'type' ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
-                  )}
-               >
-                 <Type size={16} />
-                 Type Prompt
-               </button>
-               <button 
-                  onClick={() => setMode('draw')}
-                  className={clsx(
-                    "flex-1 flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-all duration-200",
-                    mode === 'draw' ? "bg-white text-black shadow-sm" : "text-zinc-500 hover:text-zinc-700"
-                  )}
-               >
-                 <PenTool size={16} />
-                 Draw Shape
-               </button>
-            </div>
+            <Segmented
+              block
+              value={mode}
+              onChange={(val) => setMode(val as InputMode)}
+              options={[
+                {
+                  label: (
+                    <Space>
+                      <FontSizeOutlined />
+                      Type Prompt
+                    </Space>
+                  ),
+                  value: "type",
+                },
+                {
+                  label: (
+                    <Space>
+                      <EditOutlined />
+                      Draw Shape
+                    </Space>
+                  ),
+                  value: "draw",
+                },
+              ]}
+              style={{ marginTop: 16, marginBottom: 16 }}
+            />
 
             {/* Input Area */}
-            <div className="flex flex-col gap-3">
-              {mode === 'type' ? (
-                <div className="relative">
-                  <textarea 
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="e.g., A running route shaped like a dinosaur..."
-                    className="w-full h-24 p-3 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all resize-none bg-zinc-50 focus:bg-white"
-                  />
-                  <div className="absolute bottom-2 right-2 text-xs text-zinc-400">
-                    {prompt.length}/200
-                  </div>
-                </div>
+            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              {mode === "type" ? (
+                <TextArea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="e.g., A running route shaped like a dinosaur..."
+                  autoSize={{ minRows: 3, maxRows: 4 }}
+                  showCount
+                  maxLength={200}
+                />
               ) : (
-                <div className="h-24 flex items-center justify-center bg-zinc-50 border border-dashed border-zinc-300 rounded-lg text-sm text-zinc-500">
-                  <p>Draw mode coming soon!</p>
+                <div
+                  style={{
+                    height: 80,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    background: "#fafafa",
+                    border: "1px dashed #d9d9d9",
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text type="secondary">Draw mode coming soon!</Text>
                 </div>
               )}
 
               {/* Location Picker */}
-              <div className="flex items-center gap-2">
-                 <button 
-                   onClick={getCurrentLocation}
-                   disabled={locationLoading}
-                   className={clsx(
-                     "flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border transition-colors w-full",
-                     latitude ? "bg-green-50 text-green-700 border-green-200" : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50"
-                   )}
-                 >
-                   {locationLoading ? <Loader2 size={14} className="animate-spin" /> : <MapPin size={14} />}
-                   {latitude ? "Location Acquired" : "Use Current Location"}
-                 </button>
-              </div>
-              
-              {error && <p className="text-xs text-red-500 px-1">{error}</p>}
+              <Button
+                block
+                icon={
+                  locationLoading ? (
+                    <LoadingOutlined spin />
+                  ) : latitude ? (
+                    <CheckCircleOutlined style={{ color: "#52c41a" }} />
+                  ) : (
+                    <EnvironmentOutlined />
+                  )
+                }
+                onClick={getCurrentLocation}
+                loading={locationLoading}
+                type={latitude ? "default" : "dashed"}
+                style={latitude ? { borderColor: "#b7eb8f", background: "#f6ffed" } : {}}
+              >
+                {latitude ? "Location Acquired" : "Use Current Location"}
+              </Button>
+
+              {error && <Alert message={error} type="error" showIcon />}
 
               {/* Generate Button */}
-              <button className="w-full bg-black text-white py-2.5 rounded-lg text-sm font-medium hover:bg-zinc-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+              <Button
+                type="primary"
+                block
+                size="large"
+                icon={<RocketOutlined />}
+              >
                 Generate Route
-              </button>
-            </div>
-         </div>
-      </div>
-    </main>
+              </Button>
+            </Space>
+          </Card>
+        </div>
+      </main>
+    </ConfigProvider>
   );
 }

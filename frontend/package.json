@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.1.0",
+    "antd": "^6.2.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
     "mapbox-gl": "^3.18.0",
