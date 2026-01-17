@@ -1,2 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual Environment
+venv/
+env/
 backendvenv/
+.venv/
+
+# Environment Variables
 .env
+.env.local
+.env.production
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Testing & Artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+output.geojson
+*.log
+
+# Mac
+.DS_Store

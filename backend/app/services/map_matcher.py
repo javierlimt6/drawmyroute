@@ -4,7 +4,8 @@ from app.config import settings
 
 async def snap_to_roads(
     gps_points: list[tuple[float, float]],
-    profile: str = "walking"
+    profile: str = "walking",
+    **kwargs
 ) -> dict:
     """
     Call Mapbox Directions API to generate a runnable route connecting the points.
@@ -16,16 +17,24 @@ async def snap_to_roads(
     # Use Directions API instead of Matching API
     url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coords}"
     
-    # Allow snapping to roads within 200 meters of each waypoint
-    # We need one radius per coordinate
-    radiuses = ";".join(["200"] * len(gps_points))
+    # Allow snapping to roads based on passed radius (or default to 200m)
+    # If using 'unlimited' radius, we can omit the parameter or use 'unlimited' (Mapbox supports 'unlimited' in Matching but Directions uses number)
+    # Actually Directions API uses 'radiuses' with numbers or 'unlimited' string? 
+    # Let's stick to numbers.
+    
+    # We will pass 'radiuses' as an argument to this function in the future refactor,
+    # but for now let's just use a high default or accept it as kwargs.
+    
+    # Hack: Let's extract radius from kwargs or default to 200
+    radius = kwargs.get("radius", 200)
+    radiuses_str = ";".join([str(radius)] * len(gps_points))
     
     params = {
         "access_token": settings.MAPBOX_TOKEN,
         "geometries": "geojson",
         "overview": "full",
         "steps": "false",
-        "radiuses": radiuses 
+        "radiuses": radiuses_str
     }
     
     try:
@@ -41,21 +50,11 @@ async def snap_to_roads(
                 "duration_s": route["duration"]
             }
             
-        # Enhanced Debugging
-        print(f"\n⚠️ Mapbox API Failed!")
-        print(f"Status: {response.status_code}")
-        print(f"Response: {json.dumps(data, indent=2)}")
-        print(f"Request URL: {url}")
+        # If API returns explicit error (e.g. NoRoute), raise it so we can retry
+        # with relaxed parameters in the shape_service
+        error_code = data.get("code", "Unknown")
+        raise ValueError(f"Mapbox API Error: {error_code}")
         
     except Exception as e:
-        print(f"Map Matching Error: {e}")
-
-    # Fallback: Return straight lines (GeoJSON)
-    return {
-        "route": {
-            "type": "LineString",
-            "coordinates": [[p[1], p[0]] for p in gps_points]
-        },
-        "distance_m": 0, 
-        "duration_s": 0
-    }
+        # Re-raise to let shape_service handle the retry logic
+        raise e

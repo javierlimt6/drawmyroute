@@ -7,22 +7,35 @@ import random
 API_URL = "http://localhost:8000/api/v1/generate"
 OUTPUT_FILE = "output.geojson"
 
+# Known runnable areas in Singapore
+HOTSPOTS = [
+    {"name": "Marina Bay", "lat": 1.290270, "lng": 103.851959},
+    {"name": "Bishan Park", "lat": 1.362579, "lng": 103.846663},
+    {"name": "East Coast Park", "lat": 1.300970, "lng": 103.912239},
+    {"name": "Punggol Waterway", "lat": 1.409899, "lng": 103.904323},
+    {"name": "Jurong Lake Gardens", "lat": 1.336423, "lng": 103.730761},
+    {"name": "Bedok Reservoir", "lat": 1.343110, "lng": 103.924823},
+    {"name": "West Coast Park", "lat": 1.296831, "lng": 103.766336}
+]
+
 def main():
     # Get shape from command line arg, default to heart
     shape_id = sys.argv[1] if len(sys.argv) > 1 else "heart"
     
-    print(f"🚀 Generating route for shape: {shape_id}...")
+    # Pick a random hotspot
+    location = random.choice(HOTSPOTS)
     
-    # Singapore CBD / Marina Bay
-    # Add tiny random jitter to ensure unique request
-    lat_jit = random.uniform(-0.001, 0.001)
-    lng_jit = random.uniform(-0.001, 0.001)
+    print(f"🚀 Generating {shape_id} route at {location['name']}...")
+    
+    # Add random jitter (approx +/- 500m) to vary the exact start point
+    lat_jit = random.uniform(-0.005, 0.005)
+    lng_jit = random.uniform(-0.005, 0.005)
     
     payload = {
         "shape_id": shape_id,
-        "start_lat": 1.290270 + lat_jit,
-        "start_lng": 103.851959 + lng_jit,
-        "distance_km": 3.0
+        "start_lat": location["lat"] + lat_jit,
+        "start_lng": location["lng"] + lng_jit,
+        "distance_km": 4.0 # Good distance for these parks
     }
     
     print(f"📍 Start Location: {payload['start_lat']:.6f}, {payload['start_lng']:.6f}")
@@ -43,8 +56,8 @@ def main():
             
         print(f"✅ Route generated successfully!")
         print(f"📍 Saved to: {OUTPUT_FILE}")
-        print(f"📏 Distance: {data['distance_m']} meters")
-        print(f"⏱️ Duration: {data['duration_s']} seconds")
+        print(f"📏 Distance: {data['distance_m']:.1f} meters")
+        print(f"⏱️ Duration: {data['duration_s']/60:.1f} minutes")
         print(f"ℹ️  Shape: {data.get('shape_name', 'Unknown')}")
         
     except Exception as e:
