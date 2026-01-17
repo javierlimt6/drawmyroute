@@ -7,6 +7,7 @@ interface LocationState {
   longitude: number | null;
   error: string | null;
   loading: boolean;
+  isManual: boolean;
 }
 
 export function useLocation() {
@@ -15,6 +16,7 @@ export function useLocation() {
     longitude: null,
     error: null,
     loading: false,
+    isManual: false,
   });
 
   const getCurrentLocation = useCallback(() => {
@@ -36,6 +38,7 @@ export function useLocation() {
           longitude: position.coords.longitude,
           error: null,
           loading: false,
+          isManual: false,
         });
       },
       (error) => {
@@ -48,5 +51,15 @@ export function useLocation() {
     );
   }, []);
 
-  return { ...location, getCurrentLocation };
+  const setManualLocation = useCallback((lat: number, lng: number) => {
+    setLocation({
+      latitude: lat,
+      longitude: lng,
+      error: null,
+      loading: false,
+      isManual: true,
+    });
+  }, []);
+
+  return { ...location, getCurrentLocation, setManualLocation };
 }

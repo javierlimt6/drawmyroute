@@ -1,9 +1,10 @@
 "use client";
 
 import MapComponent from "@/components/Map";
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "@/hooks/use-location";
 import { generateRoute } from "@/lib/api";
+import { searchLocations, reverseGeocode, GeocodingResult } from "@/lib/geocoding";
 import {
   Card,
   Typography,
@@ -14,6 +15,7 @@ import {
   Segmented,
   Slider,
   Alert,
+  AutoComplete,
 } from "antd";
 import {
   EnvironmentOutlined,
@@ -64,7 +66,69 @@ export default function Home() {
   const [generatedRoute, setGeneratedRoute] = useState<GeoJSON.LineString | null>(null);
   const [routeStats, setRouteStats] = useState<{ distance_m: number; duration_s: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const { latitude, longitude, loading: locationLoading, getCurrentLocation } = useLocation();
+  const { latitude, longitude, loading: locationLoading, isManual, getCurrentLocation, setManualLocation } = useLocation();
+  
+  // Geocoding state
+  const [searchOptions, setSearchOptions] = useState<{ value: string; label: string; data: GeocodingResult }[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Debounced search for geocoding
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchValue(value);
+    
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    if (!value.trim()) {
+      setSearchOptions([]);
+      return;
+    }
+    
+    // Debounce the search
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const results = await searchLocations(value);
+        setSearchOptions(
+          results.map((result) => ({
+            value: result.display_name,
+            label: result.display_name,
+            data: result,
+          }))
+        );
+      } catch (err) {
+        console.error("Search failed:", err);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 2000);
+  }, []);
+
+  // Handle selecting a location from autocomplete
+  const handleLocationSelect = useCallback(
+    (value: string, option: { value: string; label: string; data: GeocodingResult }) => {
+      setSearchValue(value);
+      setManualLocation(option.data.lat, option.data.lon);
+    },
+    [setManualLocation]
+  );
+
+  // When using GPS, update the search field with the address
+  const handleGetCurrentLocation = useCallback(async () => {
+    getCurrentLocation();
+  }, [getCurrentLocation]);
+
+  // Reverse geocode when GPS location is obtained
+  useEffect(() => {
+    if (latitude && longitude && !isManual && !searchValue) {
+      reverseGeocode(latitude, longitude).then((address) => {
+        setSearchValue(address);
+      });
+    }
+  }, [latitude, longitude, isManual, searchValue]);
 
   // Conversion helpers
   const KM_TO_MI = 0.621371;
@@ -243,23 +307,38 @@ export default function Home() {
               </div>
 
               {/* Location Search */}
-              <Input
-                size="large"
-                placeholder="Enter starting location..."
-                prefix={<SearchOutlined style={{ color: "#999" }} />}
-                suffix={
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={locationLoading ? <LoadingOutlined spin /> : <AimOutlined />}
-                    onClick={getCurrentLocation}
-                    style={{ color: latitude ? "#52c41a" : STRAVA_ORANGE }}
+              <div style={{ marginBottom: 20 }}>
+                <AutoComplete
+                  style={{ width: "100%" }}
+                  options={searchOptions}
+                  value={searchValue}
+                  onSearch={handleSearchChange}
+                  onSelect={handleLocationSelect}
+                  notFoundContent={isSearching ? "Searching..." : null}
+                >
+                  <Input
+                    size="large"
+                    placeholder="Enter starting location..."
+                    prefix={<SearchOutlined style={{ color: "#999" }} />}
+                    suffix={
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={locationLoading || isSearching ? <LoadingOutlined spin /> : <AimOutlined />}
+                        onClick={handleGetCurrentLocation}
+                        style={{ color: latitude ? "#52c41a" : STRAVA_ORANGE }}
+                        title={latitude ? "Location set" : "Use my current location"}
+                      />
+                    }
+                    style={{ borderRadius: 8, height: 48 }}
                   />
-                }
-                value={searchValue}
-                onChange={(e) => setSearchValue(e.target.value)}
-                style={{ marginBottom: 20, borderRadius: 8, height: 48 }}
-              />
+                </AutoComplete>
+                {latitude && longitude && (
+                  <Text style={{ fontSize: 11, color: "#52c41a", marginTop: 4, display: "block" }}>
+                    <EnvironmentOutlined /> Location set: {latitude.toFixed(4)}, {longitude.toFixed(4)}
+                  </Text>
+                )}
+              </div>
 
               {/* Predefined Shapes Selector */}
               <div style={{ marginBottom: 16 }}>
