@@ -1,10 +1,13 @@
 """
-Text to SVG Path Conversion Service using FreeType
+Text to SVG Path Conversion Service - Skeleton/Centerline Version
+Generates multi-stroke paths suitable for route drawing
 """
 
 import os
-from svgpathtools import Line, QuadraticBezier, Path
-from freetype import Face
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from skimage.morphology import skeletonize
+import cv2
 
 
 DEFAULT_FONTS = [
@@ -21,12 +24,11 @@ def find_font() -> str:
     raise FileNotFoundError("No suitable font found.")
 
 
-def tuple_to_imag(t):
-    return t[0] + t[1] * 1j
-
-
 def text_to_svg_path(text: str, font_path: str | None = None) -> str:
-    """Convert text to normalized SVG path using FreeType outline decomposition."""
+    """
+    Convert text to skeleton SVG path with multiple strokes.
+    Uses image rendering + skeletonization for centerline paths.
+    """
     if not text or not text.strip():
         raise ValueError("Text cannot be empty")
     
@@ -35,83 +37,67 @@ def text_to_svg_path(text: str, font_path: str | None = None) -> str:
     if font_path is None:
         font_path = find_font()
     
-    face = Face(font_path)
-    face.set_char_size(48 * 64)
+    # Render text to image
+    font_size = 200
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except Exception:
+        font = ImageFont.load_default()
     
+    # Get text bounding box
+    dummy_img = Image.new('L', (1, 1))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+    bbox = dummy_draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0] + 40
+    text_height = bbox[3] - bbox[1] + 40
+    
+    # Create image with white background, draw black text
+    img = Image.new('L', (text_width, text_height), 255)
+    draw = ImageDraw.Draw(img)
+    draw.text((20 - bbox[0], 20 - bbox[1]), text, font=font, fill=0)
+    
+    # Convert to binary (text = True, background = False)
+    img_array = np.array(img)
+    binary = img_array < 128
+    
+    # Skeletonize to get centerline
+    skeleton = skeletonize(binary)
+    skeleton_uint8 = (skeleton * 255).astype(np.uint8)
+    
+    # Find contours in skeleton - each contour becomes a separate stroke
+    contours, _ = cv2.findContours(skeleton_uint8, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        raise ValueError(f"Could not generate skeleton for '{text}'")
+    
+    # Build SVG path with multiple strokes (M...L... for each contour)
     all_paths = []
-    x_cursor = 0  # In font units (NOT pixels!)
-    
-    for char in text:
-        face.load_char(char)
-        outline = face.glyph.outline
-        
-        # Copy points immediately (FreeType reuses the buffer)
-        raw_points = [(p[0], p[1]) for p in outline.points]
-        raw_tags = list(outline.tags)
-        raw_contours = list(outline.contours)
-        
-        # Get advance in font units (NOT >> 6 which converts to pixels)
-        advance = face.glyph.advance.x  # Keep in font units!
-        
-        if not raw_points:
-            x_cursor += advance
+    for contour in contours:
+        if len(contour) < 2:
             continue
         
-        # Flip Y for this character and add x_cursor offset
-        y_coords = [p[1] for p in raw_points]
-        max_y = max(y_coords) if y_coords else 0
-        outline_points = [(p[0] + x_cursor, max_y - p[1]) for p in raw_points]
+        # Simplify contour
+        epsilon = 1.5
+        simplified = cv2.approxPolyDP(contour, epsilon, closed=False)
         
-        start, end = 0, 0
+        if len(simplified) < 2:
+            continue
         
-        for i in range(len(raw_contours)):
-            end = raw_contours[i]
-            points = outline_points[start:end + 1]
-            points.append(points[0])
-            tags = raw_tags[start:end + 1]
-            tags.append(tags[0])
-            
-            segments = [[points[0]]]
-            for j in range(1, len(points)):
-                segments[-1].append(points[j])
-                if tags[j] and j < (len(points) - 1):
-                    segments.append([points[j]])
-            
-            for segment in segments:
-                if len(segment) == 2:
-                    all_paths.append(Line(
-                        start=tuple_to_imag(segment[0]),
-                        end=tuple_to_imag(segment[1])
-                    ))
-                elif len(segment) == 3:
-                    all_paths.append(QuadraticBezier(
-                        start=tuple_to_imag(segment[0]),
-                        control=tuple_to_imag(segment[1]),
-                        end=tuple_to_imag(segment[2])
-                    ))
-                elif len(segment) == 4:
-                    C = ((segment[1][0] + segment[2][0]) / 2.0,
-                         (segment[1][1] + segment[2][1]) / 2.0)
-                    all_paths.append(QuadraticBezier(
-                        start=tuple_to_imag(segment[0]),
-                        control=tuple_to_imag(segment[1]),
-                        end=tuple_to_imag(C)
-                    ))
-                    all_paths.append(QuadraticBezier(
-                        start=tuple_to_imag(C),
-                        control=tuple_to_imag(segment[2]),
-                        end=tuple_to_imag(segment[3])
-                    ))
-            
-            start = end + 1
-        
-        x_cursor += advance
+        # Build path for this stroke
+        points = [(int(p[0][0]), int(p[0][1])) for p in simplified]
+        path_str = f"M {points[0][0]},{points[0][1]}"
+        for p in points[1:]:
+            path_str += f" L {p[0]},{p[1]}"
+        all_paths.append(path_str)
     
     if not all_paths:
-        raise ValueError(f"No paths generated for '{text}'")
+        raise ValueError(f"No valid paths for '{text}'")
     
-    final_path = Path(*all_paths)
-    return normalize_path(final_path.d())
+    # Combine all strokes
+    combined_path = " ".join(all_paths)
+    
+    # Normalize to 0-100 viewBox
+    return normalize_path(combined_path)
 
 
 def normalize_path(path_data: str) -> str:
@@ -163,6 +149,19 @@ def text_to_svg_path_cached(text: str) -> str:
 if __name__ == "__main__":
     try:
         path = text_to_svg_path("NUS")
-        print(f"Generated path: {path[:200]}...")
+        print(f"Generated skeleton path: {path[:300]}...")
+        
+        # Write test HTML
+        html = f"""<!DOCTYPE html>
+<html><head><title>Skeleton Text Test</title></head>
+<body style="background:#333;padding:40px;">
+<h1 style="color:#FC4C02;">Skeleton NUS (multi-stroke)</h1>
+<svg width="400" height="200" viewBox="0 0 100 100" style="background:white;">
+    <path d="{path}" fill="none" stroke="black" stroke-width="1"/>
+</svg>
+</body></html>"""
+        with open("skeleton_test.html", "w") as f:
+            f.write(html)
+        print("Wrote skeleton_test.html")
     except Exception as e:
         print(f"Error: {e}")
