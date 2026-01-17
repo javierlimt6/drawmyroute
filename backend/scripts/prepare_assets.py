@@ -4,11 +4,16 @@ import shutil
 import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
+import sys
 
 # Setup Paths
 SCRIPT_DIR = Path(__file__).parent
 ROOT_DIR = SCRIPT_DIR.parent
 DATA_DIR = ROOT_DIR / "app" / "data"
+
+# Add backend to path to import app
+sys.path.append(str(ROOT_DIR))
+from app.utils.embeddings import build_vector_index
 LUCIDE_DIR = SCRIPT_DIR / "lucide"
 ICONS_DIR = LUCIDE_DIR / "icons"
 
@@ -54,6 +59,11 @@ def run_extraction():
                     continue
 
                 full_d = " ".join(paths)
+                
+                # Ensure path is closed (contains 'z') and has enough complexity for a route
+                if 'z' not in full_d.lower() or len(full_d) < 30:
+                    continue
+                
                 data_store[name] = full_d
                 
                 # 2. Extract Characteristics (Tags)
@@ -80,6 +90,9 @@ def run_extraction():
     
     print(f"✅ Processed {count} icons.")
     print(f"📂 Saved to {DATA_DIR}")
+    
+    # Build Vector Index
+    build_vector_index(semantic_index)
 
 if __name__ == "__main__":
     run_extraction()

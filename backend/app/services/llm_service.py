@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import httpx
 from app.config import settings
+from app.utils.embeddings import search_vector_index
 
 CACHE_PATH = Path(__file__).parent.parent / "data" / "prompt_cache.json"
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -78,33 +79,35 @@ def _trace_image_to_svg(image_url: str) -> str:
     return points_to_svg(normalized.tolist())
 
 def _get_best_icon_match(prompt: str) -> str | None:
-    """Semantic search for best icon match using GPT-4o-mini."""
+    """Two-Stage Retrieval: Vector Search + LLM Re-Ranking."""
     if not SEMANTIC_INDEX:
         return None
         
+    # 1. Broad Search (Vector Index)
+    top_indices = search_vector_index(prompt, top_k=15)
+    
+    if not top_indices:
+        print(f"⚠️ Vector search found no candidates for '{prompt}'")
+        # Fallback to DALL-E directly? Or return None to let caller handle fallback.
+        return None
+        
+    candidates = [SEMANTIC_INDEX[i] for i in top_indices]
+    
+    # 2. Narrow Re-Ranking (LLM)
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     
-    # Create a rich context of names + tags
-    icon_entries = []
-    for item in SEMANTIC_INDEX:
-        tags_str = ", ".join(item.get("tags", []))
-        if tags_str:
-            icon_entries.append(f"{item['name']} [tags: {tags_str}]")
-        else:
-            icon_entries.append(item['name'])
+    candidate_context = "\n".join([f"- {c['name']} (Tags: {', '.join(c.get('tags', []))})" for c in candidates])
     
     sys_prompt = f"""
-    Task: Find the exact icon name from the provided list that best matches the User Query.
+    Pick the BEST icon name from the list below for the user query.
     
     Rules:
-    1. Return ONLY the icon name (the part before [tags:]).
-    2. Use the tags to understand the semantic meaning.
-    3. If the user asks for "Love", find an icon with tags like "emotion" or "heart".
-    4. Return 'NONE' if no good match is found.
-    5. Output clean name only (e.g. "heart", not "heart [tags:...]").
+    1. ONLY return the exact name. No markdown, no quotes.
+    2. If no reasonable match exists, return 'NONE'.
+    3. Prefer exact semantic matches (e.g. "dog" for "pup").
     
-    Available Icons:
-    {"; ".join(icon_entries)}
+    Candidates:
+    {candidate_context}
     """
     
     try:
@@ -122,14 +125,10 @@ def _get_best_icon_match(prompt: str) -> str | None:
         # Robust cleanup
         match = raw_match.replace("'", "").replace('"', "").replace("`", "").strip().lower()
         
-        print(f"🤖 Retrieval Debug: Prompt='{prompt}' -> Raw='{raw_match}' -> Cleaned='{match}'")
+        print(f"🤖 Retrieval Debug: Prompt='{prompt}' -> Candidates={len(candidates)} -> Selected='{match}'")
         
-        # Verify existence
         if match != "none" and match in DATA_STORE:
             return match
-            
-        if match != "none" and match not in DATA_STORE:
-            print(f"⚠️ Match '{match}' found by LLM but missing from Data Store.")
             
         return None
     except Exception as e:
