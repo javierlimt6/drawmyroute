@@ -68,7 +68,8 @@ async def generate_route_from_shape(
     start_lat: float,
     start_lng: float,
     distance_km: float,
-    prompt: str | None = None
+    prompt: str | None = None,
+    aspect_ratio: float = 1.0
 ) -> dict:
     """V1: Generate route from predefined shape OR custom prompt."""
     
@@ -136,7 +137,7 @@ async def generate_route_from_shape(
             try:
                 # 1. Parse & Scale with current scale_factor
                 abstract_points = sample_svg_path(svg_path, num_points=strategy["points"])
-                gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km, scale_factor)
+                gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km, scale_factor, aspect_ratio=aspect_ratio)
                 
                 # 2. Try to map match
                 result = await snap_to_roads(
@@ -251,11 +252,14 @@ async def generate_route_osrm(
     start_lat: float,
     start_lng: float,
     distance_km: float,
-    prompt: str | None = None
+    prompt: str | None = None,
+    aspect_ratio: float = 1.0,
+    fast_mode: bool = False
 ) -> dict:
     """
     Generate route using OSRM with multi-variant optimization.
     Tests multiple rotations and sizes in parallel to find the best fit.
+    fast_mode: Skip optimization for faster resize response.
     """
     import asyncio
     
@@ -275,12 +279,18 @@ async def generate_route_osrm(
     else:
         raise ValueError("No shape specified")
     
-    print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km)")
-    
-    # Configuration for grid search
-    NUM_POINTS = 80  # Higher point count for smoother curves
-    ROTATIONS = [0, 45, 90, 135]  # Degrees
-    SCALE_FACTORS = [0.6, 0.8, 1.0, 1.2]  # Size multipliers
+    # Fast mode: Single variant with fewer points for resize
+    if fast_mode:
+        NUM_POINTS = 40  # Fewer points for speed
+        ROTATIONS = [0]
+        SCALE_FACTORS = [1.0]
+        print(f"⚡ [OSRM Fast] Generating '{current_shape_id}' ({distance_km}km)")
+    else:
+        NUM_POINTS = 80  # Higher point count for smoother curves
+        ROTATIONS = [0, 90]  # Reduced from 4 to 2 for speed
+        # Wider scale range: smaller values help when roads add more distance
+        SCALE_FACTORS = [0.5, 0.7, 0.9, 1.0, 1.1]  # 5 values for 10 total variants
+        print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km)")
     
     # Parse SVG once
     abstract_points = sample_svg_path(svg_path, num_points=NUM_POINTS)
@@ -297,10 +307,10 @@ async def generate_route_osrm(
     
     print(f"   🔀 Testing {len(variants)} variants ({len(ROTATIONS)} rotations × {len(SCALE_FACTORS)} sizes)")
     
-    # Quality thresholds (adjustable)
-    MAX_FAILED_SEGMENT_RATIO = 0.15  # Max 15% failed segments
-    MAX_DISTANCE_RATIO = 2.5         # Route can't be >2.5x target
-    MIN_DISTANCE_RATIO = 0.3         # Route can't be <30% of target
+    # Quality thresholds (relaxed since perimeter-based is more accurate)
+    MAX_FAILED_SEGMENT_RATIO = 0.20  # Max 20% failed segments (roads may not exist)
+    MAX_DISTANCE_RATIO = 1.8         # Route can't be >1.8x target
+    MIN_DISTANCE_RATIO = 0.5         # Route can't be <50% of target
     MIN_ACCEPTABLE_SCORE = 40.0      # Minimum score to accept
     
     async def evaluate_variant(variant: dict) -> dict:
@@ -312,7 +322,8 @@ async def generate_route_osrm(
                 start_lat, start_lng,
                 distance_km,
                 scale_factor=variant["scale"],
-                rotation_deg=variant["rotation"]
+                rotation_deg=variant["rotation"],
+                aspect_ratio=aspect_ratio
             )
             
             # Route using OSRM
@@ -448,18 +459,22 @@ async def generate_route(
     start_lat: float,
     start_lng: float,
     distance_km: float,
-    prompt: str | None = None
+    prompt: str | None = None,
+    aspect_ratio: float = 1.0,
+    fast_mode: bool = False
 ) -> dict:
     """
     Main entry point for route generation.
     Selects algorithm based on ROUTING_ALGORITHM config setting.
+    fast_mode: Skip multi-variant optimization for faster resize response.
     """
     algorithm = settings.ROUTING_ALGORITHM
-    print(f"📐 Using algorithm: {algorithm}")
+    mode_str = "[FAST]" if fast_mode else ""
+    print(f"📐 {mode_str} Using algorithm: {algorithm}, aspect_ratio: {aspect_ratio:.2f}")
     
     if algorithm == "osrm":
-        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt)
+        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio, fast_mode)
     else:
-        return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt)
+        return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
 
 

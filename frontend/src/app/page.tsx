@@ -3,7 +3,7 @@
 import MapComponent from "@/components/Map";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "@/hooks/use-location";
-import { generateRoute } from "@/lib/api";
+import { generateRoute, exportGPX } from "@/lib/api";
 import {
   searchLocations,
   reverseGeocode,
@@ -29,6 +29,7 @@ import {
   EditOutlined,
   FontSizeOutlined,
   RocketOutlined,
+  DownloadOutlined,
 } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
@@ -145,7 +146,7 @@ export default function Home() {
   const [mode, setMode] = useState<InputMode>("type");
   const [prompt, setPrompt] = useState("");
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
-  const [distance, setDistance] = useState(5); // Always stored in km
+  const [distance, setDistance] = useState(10); // Always stored in km
   const [unit, setUnit] = useState<"km" | "mi">("km");
   const [targetPace, setTargetPace] = useState(6); // min/km (default 6:00)
   const [searchValue, setSearchValue] = useState("");
@@ -153,12 +154,16 @@ export default function Home() {
   const [generatedRoute, setGeneratedRoute] =
     useState<GeoJSON.LineString | null>(null);
   const [generatedSvg, setGeneratedSvg] = useState<string | null>(null);
+  const [aspectRatio, setAspectRatio] = useState(1.0); // For interactive resize
+  const [routeCenter, setRouteCenter] = useState<{ lat: number; lng: number } | null>(null); // Separate from orange dot
   const [routeStats, setRouteStats] = useState<{
     distance_m: number;
     duration_s: number;
   } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(true);  // Toggle for resize overlay
   const {
     latitude,
     longitude,
@@ -255,9 +260,25 @@ export default function Home() {
 
   // Real API call
   const handleGenerate = async () => {
-    if (!latitude || !longitude) {
-      getCurrentLocation();
-      return;
+    let lat = latitude;
+    let lng = longitude;
+    
+    // If no location, get it first
+    if (!lat || !lng) {
+      setIsGenerating(true);
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+        setManualLocation(lat, lng);
+        setSearchValue(`Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      } catch (err) {
+        setError("Could not get location. Please enter an address.");
+        setIsGenerating(false);
+        return;
+      }
     }
 
     setIsGenerating(true);
@@ -265,9 +286,10 @@ export default function Home() {
 
     try {
       const requestPayload = {
-        start_lat: latitude,
-        start_lng: longitude,
+        start_lat: lat,
+        start_lng: lng,
         distance_km: distance,
+        aspect_ratio: aspectRatio,
         ...(mode === "type" && prompt.trim()
           ? { prompt: prompt.trim() }
           : { shape_id: selectedShape || "heart" }),
@@ -284,12 +306,127 @@ export default function Home() {
       setShowModal(false);
     } catch (err) {
       console.error("Generation failed:", err);
-      setError(err instanceof Error ? err.message : "Failed to generate route");
+      setError(err instanceof Error ? err.message : "Failed to generate route. Try a different location or shape.");
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // Debounced resize - only triggers API after user stops dragging
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousAspectRatioRef = useRef<number>(1.0);
+  
+  const handleResize = (aspectRatioMultiplier: number) => {
+    // Store previous aspect ratio for revert on error
+    previousAspectRatioRef.current = aspectRatio;
+    
+    // Multiply current aspect ratio by the multiplier from overlay drag
+    const newAspectRatio = Math.max(0.25, Math.min(4.0, aspectRatio * aspectRatioMultiplier));
+    setAspectRatio(newAspectRatio);
+    
+    // Clear previous timeout
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+    
+    // Store previous state for revert
+    const prevRoute = generatedRoute;
+    const prevStats = routeStats;
+    
+    // Debounce: wait 300ms after last drag before calling API
+    resizeTimeoutRef.current = setTimeout(async () => {
+      // Use routeCenter if set, otherwise fall back to input location
+      const centerLat = routeCenter?.lat ?? latitude;
+      const centerLng = routeCenter?.lng ?? longitude;
+      if (!centerLat || !centerLng) return;
+
+      setIsGenerating(true);
+      try {
+        const requestPayload = {
+          start_lat: centerLat,
+          start_lng: centerLng,
+          distance_km: distance,
+          aspect_ratio: newAspectRatio,
+          fast_mode: true,  // Use fast mode for resize
+          ...(mode === "type" && prompt.trim()
+            ? { prompt: prompt.trim() }
+            : { shape_id: selectedShape || "heart" }),
+        };
+
+        const result = await generateRoute(requestPayload);
+        setGeneratedRoute(result.route);
+        setGeneratedSvg(result.svg_path);
+        setRouteStats({
+          distance_m: result.distance_m,
+          duration_s: result.duration_s,
+        });
+      } catch (err) {
+        console.error("Resize failed:", err);
+        setError(err instanceof Error ? err.message : "Failed to resize route. The area may not have enough roads.");
+        // Revert to previous state
+        setAspectRatio(previousAspectRatioRef.current);
+        setGeneratedRoute(prevRoute);
+        setRouteStats(prevStats);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 300);
+  };
+
+  // Handle move - regenerate route at new location (does NOT update orange dot)
+  const moveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousRouteCenterRef = useRef<{ lat: number; lng: number } | null>(null);
+  
+  const handleMove = (newLat: number, newLng: number) => {
+    // Store previous route center for revert on error
+    previousRouteCenterRef.current = routeCenter ?? (latitude && longitude ? { lat: latitude, lng: longitude } : null);
+    
+    // Update route center (does NOT affect orange dot or search value)
+    setRouteCenter({ lat: newLat, lng: newLng });
+    
+    // Clear previous timeout
+    if (moveTimeoutRef.current) {
+      clearTimeout(moveTimeoutRef.current);
+    }
+    
+    // Store previous state for revert
+    const prevRoute = generatedRoute;
+    const prevStats = routeStats;
+    
+    // Debounce: wait 300ms before calling API
+    moveTimeoutRef.current = setTimeout(async () => {
+      setIsGenerating(true);
+      try {
+        const requestPayload = {
+          start_lat: newLat,
+          start_lng: newLng,
+          distance_km: distance,
+          aspect_ratio: aspectRatio,
+          fast_mode: true,
+          ...(mode === "type" && prompt.trim()
+            ? { prompt: prompt.trim() }
+            : { shape_id: selectedShape || "heart" }),
+        };
+
+        const result = await generateRoute(requestPayload);
+        setGeneratedRoute(result.route);
+        setGeneratedSvg(result.svg_path);
+        setRouteStats({
+          distance_m: result.distance_m,
+          duration_s: result.duration_s,
+        });
+      } catch (err) {
+        console.error("Move failed:", err);
+        setError(err instanceof Error ? err.message : "Failed to move route. The area may not have enough roads.");
+        // Revert to previous state
+        setRouteCenter(previousRouteCenterRef.current);
+        setGeneratedRoute(prevRoute);
+        setRouteStats(prevStats);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 300);
+  };
   const distanceMarks =
     unit === "km"
       ? { 0: "0", 10: "10", 20: "20", 30: "30", 40: "40", 50: "50" }
@@ -320,22 +457,7 @@ export default function Home() {
             background: STRAVA_DARK,
           }}
         >
-          {/* Subtitle */}
-          <div
-            style={{
-              background: "#111",
-              padding: "6px 0",
-              textAlign: "center",
-              borderBottom: "1px solid #333",
-            }}
-          >
-            <Text style={{ color: "#888", fontSize: 11 }}>
-              A Hack&Roll 2026 product by{" "}
-              <span style={{ color: STRAVA_ORANGE }}>duo showdown</span>
-            </Text>
-          </div>
-
-          {/* Main Header */}
+          {/* Single Consolidated Header */}
           <div
             style={{
               padding: "10px 20px",
@@ -344,10 +466,7 @@ export default function Home() {
               justifyContent: "space-between",
             }}
           >
-            {/* Left spacer */}
-            <div style={{ width: 80 }} />
-
-            {/* Center logo - clickable to reset */}
+            {/* Left - DrawMyRoute logo */}
             <div
               style={{
                 display: "flex",
@@ -361,6 +480,7 @@ export default function Home() {
                 setGeneratedSvg(null);
                 setRouteStats(null);
                 setError(null);
+                setAspectRatio(1.0);
               }}
             >
               <svg
@@ -379,7 +499,13 @@ export default function Home() {
               </Text>
             </div>
 
-            {/* GitHub link */}
+            {/* Center - Hack&Roll badge */}
+            <Text style={{ color: "#888", fontSize: 11 }}>
+              A Hack&Roll 2026 project by{" "}
+              <span style={{ color: STRAVA_ORANGE }}>duo showdown</span>
+            </Text>
+
+            {/* Right - GitHub link */}
             <a
               href="https://github.com/javierlimt6/drawmyroute"
               target="_blank"
@@ -411,6 +537,11 @@ export default function Home() {
           <MapComponent
             route={generatedRoute}
             center={longitude && latitude ? [longitude, latitude] : undefined}
+            onResize={handleResize}
+            onMove={handleMove}
+            isResizing={isGenerating}
+            svgPath={generatedSvg}
+            showOverlay={showOverlay}
           />
           {showModal && (
             <div
@@ -859,52 +990,8 @@ export default function Home() {
                 Your Route is Ready! 🎉
               </Title>
 
-              {/* SVG Preview */}
-              {generatedSvg && (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    marginBottom: 20,
-                    background: "#f9f9f9",
-                    borderRadius: 12,
-                    padding: 10,
-                  }}
-                >
-                  <svg
-                    viewBox="0 0 100 100"
-                    width="80"
-                    height="80"
-                    style={{ transform: "scaleY(1)", overflow: "visible" }}
-                  >
-                    <path
-                      d={generatedSvg}
-                      fill="none"
-                      stroke={STRAVA_ORANGE}
-                      strokeWidth="2"
-                    />
-                  </svg>
-                  <div
-                    style={{
-                      marginLeft: 16,
-                      display: "flex",
-                      flexDirection: "column",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Text style={{ fontSize: 11, color: "#888" }}>
-                      Original AI Shape
-                    </Text>
-                    <Text strong>
-                      {prompt || selectedShape || "Custom Shape"}
-                    </Text>
-                  </div>
-                </div>
-              )}
-
-              {/* Stats Row */}
-              <div style={{ display: "flex", gap: 24, marginBottom: 20 }}>
+              {/* Stats Row with Description */}
+              <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
                 <div>
                   <Text
                     style={{ fontSize: 11, color: "#888", display: "block" }}
@@ -953,49 +1040,93 @@ export default function Home() {
                     /km
                   </Text>
                 </div>
+                <div>
+                  <Text
+                    style={{ fontSize: 11, color: "#888", display: "block" }}
+                  >
+                    Shape
+                  </Text>
+                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
+                    {prompt || selectedShape || "Custom Shape"}
+                  </Text>
+                </div>
               </div>
 
-              {/* Action Buttons */}
-              <Space
-                style={{ width: "100%" }}
-                direction="vertical"
-                size="small"
+              {/* Overlay Toggle */}
+              <div 
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  gap: 8, 
+                  marginBottom: 16,
+                  padding: "8px 12px",
+                  background: "#f5f5f5",
+                  borderRadius: 8,
+                  cursor: "pointer"
+                }}
+                onClick={() => setShowOverlay(!showOverlay)}
               >
+                <input
+                  type="checkbox"
+                  checked={showOverlay}
+                  onChange={() => setShowOverlay(!showOverlay)}
+                  style={{ width: 16, height: 16, cursor: "pointer" }}
+                />
+                <Text style={{ fontSize: 13, color: "#333" }}>
+                  Show resize handles
+                </Text>
+              </div>
+
+              {/* Action Buttons - Horizontal */}
+              <div style={{ display: "flex", gap: 12 }}>
                 <Button
-                  block
                   size="large"
                   type="primary"
-                  icon={<RocketOutlined />}
+                  icon={<DownloadOutlined />}
+                  loading={isExporting}
                   style={{
+                    flex: 1,
                     background: STRAVA_ORANGE,
                     borderColor: STRAVA_ORANGE,
                     borderRadius: 10,
                     height: 48,
                     fontWeight: 600,
                   }}
-                  onClick={() => {
-                    // TODO: Open in Strava or start navigation
-                    window.open(
-                      `https://www.google.com/maps/dir/?api=1&origin=${latitude},${longitude}&destination=${latitude},${longitude}&travelmode=walking`,
-                      "_blank"
-                    );
+                  onClick={async () => {
+                    if (!latitude || !longitude) return;
+                    setIsExporting(true);
+                    try {
+                      await exportGPX({
+                        start_lat: latitude,
+                        start_lng: longitude,
+                        distance_km: distance,
+                        aspect_ratio: aspectRatio,
+                        ...(mode === "type" && prompt.trim()
+                          ? { prompt: prompt.trim() }
+                          : { shape_id: selectedShape || "heart" }),
+                      });
+                    } catch (err) {
+                      console.error("Export failed:", err);
+                      setError(err instanceof Error ? err.message : "Failed to export GPX file.");
+                    } finally {
+                      setIsExporting(false);
+                    }
                   }}
                 >
-                  Start Route
+                  {isExporting ? "Exporting..." : "Export GPX"}
                 </Button>
                 <Button
-                  block
                   size="large"
-                  style={{ borderRadius: 10, height: 44 }}
+                  style={{ flex: 1, borderRadius: 10, height: 48 }}
                   onClick={() => {
                     setShowModal(true);
                     setGeneratedRoute(null);
                     setGeneratedSvg(null);
                   }}
                 >
-                  Generate New Route
+                  Create New Route
                 </Button>
-              </Space>
+              </div>
             </div>
           </div>
         )}
