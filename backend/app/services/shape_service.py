@@ -247,10 +247,11 @@ async def generate_route_from_shape(
 
 
 async def generate_route_osrm(
-    shape_id: str,
+    shape_id: str | None,
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    prompt: str | None = None
 ) -> dict:
     """
     Generate route using OSRM with multi-variant optimization.
@@ -258,14 +259,23 @@ async def generate_route_osrm(
     """
     import asyncio
     
-    shapes = load_shapes()
+    # Logic Branch: Custom vs Predefined
+    if prompt:
+        print(f"✨ Custom Prompt: {prompt}")
+        svg_path = generate_svg_from_prompt(prompt, distance_km)
+        shape_name = f"Custom: {prompt}"
+        current_shape_id = "custom"
+    elif shape_id:
+        shapes = load_shapes()
+        if shape_id not in shapes:
+            raise ValueError(f"Unknown shape: {shape_id}")
+        svg_path = shapes[shape_id]["svg_path"]
+        shape_name = shapes[shape_id]["name"]
+        current_shape_id = shape_id
+    else:
+        raise ValueError("No shape specified")
     
-    if shape_id not in shapes:
-        raise ValueError(f"Unknown shape: {shape_id}")
-    
-    svg_path = shapes[shape_id]["svg_path"]
-    
-    print(f"🔄 [OSRM Multi-Variant] Generating '{shape_id}' ({distance_km}km)")
+    print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km)")
     
     # Configuration for grid search
     NUM_POINTS = 80  # Higher point count for smoother curves
@@ -308,16 +318,6 @@ async def generate_route_osrm(
             # Route using OSRM
             result = await snap_to_roads_osrm(gps_points, profile="foot")
             
-            result_data = {
-                "shape_id": current_shape_id,
-                "shape_name": shape_name,
-                "svg_path": svg_path,
-                "original_points": abstract_points,
-                "gps_points": gps_points,
-                "score": score,
-                "strategy": strategy,
-                **result
-            }
             # --- QUALITY CHECKS ---
             failed_ratio = result.get("failed_segments", 0) / result.get("total_segments", 1)
             actual_km = result["distance_m"] / 1000.0
@@ -395,8 +395,9 @@ async def generate_route_osrm(
     
     # Build final result
     result_data = {
-        "shape_id": shape_id,
-        "shape_name": shapes[shape_id]["name"],
+        "shape_id": current_shape_id,
+        "shape_name": shape_name,
+        "svg_path": svg_path,
         "original_points": abstract_points,
         "gps_points": best["gps_points"],
         "score": best["score"],
@@ -443,10 +444,11 @@ async def generate_route_osrm(
 
 
 async def generate_route(
-    shape_id: str,
+    shape_id: str | None,
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    prompt: str | None = None
 ) -> dict:
     """
     Main entry point for route generation.
@@ -456,7 +458,8 @@ async def generate_route(
     print(f"📐 Using algorithm: {algorithm}")
     
     if algorithm == "osrm":
-        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km)
+        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt)
     else:
-        return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km)
+        return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt)
+
 
