@@ -4,11 +4,19 @@ def scale_to_gps(
     points: list[tuple[float, float]],
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    scale_factor: float = 1.0  # Multiplier to adjust size (1.0 = default, 0.5 = half size)
 ) -> list[tuple[float, float]]:
     """
     Convert 0-100 abstract coordinates to GPS coordinates.
     Uses dynamic longitude scaling to prevent distortion.
+    
+    Args:
+        points: Abstract shape points
+        start_lat: Starting latitude
+        start_lng: Starting longitude
+        distance_km: Target route distance in km
+        scale_factor: Multiplier to adjust shape size (used for iterative fitting)
     """
     # 1. Normalize points to 0-1 range based on bounding box
     xs = [p[0] for p in points]
@@ -30,41 +38,28 @@ def scale_to_gps(
     ]
     
     # 2. Calculate scaling factors
-    # Earth radius approximation (km)
-    R = 6378.137
-    
     # Degrees per km (latitude is constant-ish)
     deg_per_km_lat = 1 / 111.32
     
     # Degrees per km (longitude depends on latitude)
-    # Use start_lat for the conversion
     lat_rad = math.radians(start_lat)
     deg_per_km_lng = 1 / (111.32 * math.cos(lat_rad))
     
-    # Calculate bounding box diagonal in abstract space (hypotenuse)
-    # We want this diagonal to roughly match the requested distance
-    # Factor 6.0: accounts for road-snapping expansion (perimeter ~6x diagonal for complex shapes)
-    target_diagonal_km = distance_km / 6.0
+    # Calculate bounding box diagonal in abstract space
+    # Factor 4.0: Larger shape = points further apart = less zig-zag
+    # The iterative scaling will shrink if needed
+    target_diagonal_km = (distance_km / 4.0) * scale_factor
     
     # Apply scaling
     gps_points = []
     for nx, ny in normalized:
-        # Scale x (width) and y (height) relative to target size
-        # Since we normalized to 0-1, we simply multiply by target size in degrees
-        
-        # We assume the abstract shape is "square" in aspect ratio for simplicity of scaling,
-        # preserving the original aspect ratio of the SVG.
-        
-        # Calculate offsets in km
-        # Maintain aspect ratio: width/height ratio from SVG
+        # Maintain aspect ratio
         aspect_ratio = width / height
         
         if aspect_ratio > 1:
-            # Wider than tall
             scale_x_km = target_diagonal_km
             scale_y_km = target_diagonal_km / aspect_ratio
         else:
-            # Taller than wide
             scale_y_km = target_diagonal_km
             scale_x_km = target_diagonal_km * aspect_ratio
 
@@ -74,3 +69,4 @@ def scale_to_gps(
         gps_points.append((start_lat + lat_offset, start_lng + lng_offset))
     
     return gps_points
+

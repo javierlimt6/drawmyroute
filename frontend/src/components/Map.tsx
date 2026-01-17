@@ -15,6 +15,7 @@ interface MapComponentProps {
 export default function MapComponent({ route, center }: MapComponentProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
+  const marker = useRef<mapboxgl.Marker | null>(null);
 
   // 1. Initialize map (RUNS ONLY ONCE)
   useEffect(() => {
@@ -42,6 +43,10 @@ export default function MapComponent({ route, center }: MapComponentProps) {
 
     // Cleanup on unmount only
     return () => {
+      if (marker.current) {
+        marker.current.remove();
+        marker.current = null;
+      }
       if (map.current) {
         map.current.remove();
         map.current = null;
@@ -49,9 +54,33 @@ export default function MapComponent({ route, center }: MapComponentProps) {
     };
   }, []); // Empty dependency array = mount once
 
-  // 2. Handle Center Updates (Fly to new location)
+  // 2. Handle Center Updates (Fly to new location + update marker)
   useEffect(() => {
     if (!map.current || !center) return;
+
+    // Update or create marker for starting location
+    if (marker.current) {
+      marker.current.setLngLat(center);
+    } else {
+      // Create custom marker element
+      const el = document.createElement("div");
+      el.innerHTML = `
+        <div style="
+          width: 24px;
+          height: 24px;
+          background: ${STRAVA_ORANGE};
+          border: 3px solid white;
+          border-radius: 50%;
+          box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+          cursor: pointer;
+        "></div>
+      `;
+      
+      marker.current = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat(center)
+        .setPopup(new mapboxgl.Popup({ offset: 25 }).setText("Start Location"))
+        .addTo(map.current);
+    }
 
     // Only fly if the distance is significant to avoid jitter
     const currentCenter = map.current.getCenter();
@@ -153,3 +182,4 @@ export default function MapComponent({ route, center }: MapComponentProps) {
 
   return <div ref={mapContainer} className="w-full h-full" />;
 }
+

@@ -67,6 +67,24 @@ const PREDEFINED_SHAPES: PredefinedShape[] = [
     prompt: "A circular loop route",
   },
   {
+    id: "square",
+    name: "Square",
+    emoji: "⬜",
+    prompt: "A route shaped like a square",
+  },
+  {
+    id: "triangle",
+    name: "Triangle",
+    emoji: "🔺",
+    prompt: "A route shaped like a triangle",
+  },
+  {
+    id: "sixty7",
+    name: "67",
+    emoji: "6️⃣7️⃣",
+    prompt: "A route shaped like the number 67",
+  },
+  {
     id: "figure8",
     name: "Figure 8",
     emoji: "♾️",
@@ -95,6 +113,24 @@ const PREDEFINED_SHAPES: PredefinedShape[] = [
     name: "Merlion",
     emoji: "🦁",
     prompt: "A route shaped like the Merlion",
+  },
+  {
+    id: "banana",
+    name: "Banana",
+    emoji: "🍌",
+    prompt: "A route shaped like a banana",
+  },
+  {
+    id: "snowflake",
+    name: "Snowflake",
+    emoji: "❄️",
+    prompt: "A route shaped like a snowflake",
+  },
+  {
+    id: "thumbsup",
+    name: "Thumbs Up",
+    emoji: "👍",
+    prompt: "A route shaped like a thumbs up",
   },
 ];
 
