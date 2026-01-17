@@ -170,8 +170,10 @@ export default function Home() {
   };
 
   const distanceMarks = unit === "km" 
-    ? { 1: "1", 5: "5", 10: "10", 15: "15", 20: "20" }
-    : { 1: "0.6", 5: "3", 10: "6", 15: "9", 20: "12" };
+    ? { 0: "0", 10: "10", 20: "20", 30: "30", 40: "40", 50: "50" }
+    : { 0: "0", 5: "5", 10: "10", 15: "15", 20: "20", 25: "25", 30: "30" };
+  
+  const sliderMax = unit === "km" ? 50 : 30;
 
   return (
     <ConfigProvider
@@ -221,8 +223,16 @@ export default function Home() {
             {/* Left spacer */}
             <div style={{ width: 80 }} />
             
-            {/* Center logo */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {/* Center logo - clickable to reset */}
+            <div 
+              style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+              onClick={() => {
+                setShowModal(true);
+                setGeneratedRoute(null);
+                setRouteStats(null);
+                setError(null);
+              }}
+            >
               <svg width="24" height="24" viewBox="0 0 24 24" fill={STRAVA_ORANGE}>
                 <path d="M12 2L4 20h5l3-6 3 6h5L12 2zm0 10l-1.5 3h3L12 12z" />
               </svg>
@@ -461,12 +471,12 @@ export default function Home() {
                   <Input
                     type="number"
                     step="0.1"
-                    min={0.5}
-                    max={100}
+                    min={0}
+                    max={sliderMax}
                     value={displayDistance.toFixed(1)}
                     onChange={(e) => {
-                      const val = parseFloat(e.target.value) || 0.5;
-                      setDistanceFromDisplay(Math.min(100, Math.max(0.5, val)));
+                      const val = parseFloat(e.target.value) || 0;
+                      setDistanceFromDisplay(Math.min(sliderMax, Math.max(0, val)));
                     }}
                     style={{
                       width: 70,
@@ -486,13 +496,13 @@ export default function Home() {
                   />
                 </div>
                 <Slider
-                  min={1}
-                  max={20}
+                  min={0}
+                  max={sliderMax}
                   step={0.5}
-                  value={Math.min(distance, 20)}
-                  onChange={setDistance}
+                  value={unit === "km" ? Math.min(distance, sliderMax) : Math.min(distance * KM_TO_MI, sliderMax)}
+                  onChange={(val) => setDistance(unit === "km" ? val : val * MI_TO_KM)}
                   marks={distanceMarks}
-                  tooltip={{ formatter: (val) => `${unit === "km" ? val : (val! * KM_TO_MI).toFixed(1)} ${unit}` }}
+                  tooltip={{ formatter: (val) => `${val} ${unit}` }}
                   styles={{
                     track: { background: STRAVA_ORANGE },
                     rail: { background: "#eee" },

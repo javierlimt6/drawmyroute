@@ -43,8 +43,8 @@ def scale_to_gps(
     
     # Calculate bounding box diagonal in abstract space (hypotenuse)
     # We want this diagonal to roughly match the requested distance
-    # Factor 4.0 is a heuristic: perimeter is approx 3-4x the diagonal/diameter
-    target_diagonal_km = distance_km / 3.5
+    # Factor 6.0: accounts for road-snapping expansion (perimeter ~6x diagonal for complex shapes)
+    target_diagonal_km = distance_km / 6.0
     
     # Apply scaling
     gps_points = []
