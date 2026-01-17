@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import React, { useEffect, useRef } from "react";
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 const STRAVA_ORANGE = "#FC4C02";
@@ -16,12 +16,12 @@ export default function MapComponent({ route, center }: MapComponentProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
 
-  // Initialize map
+  // 1. Initialize map (RUNS ONLY ONCE)
   useEffect(() => {
     if (map.current) return;
     if (!mapContainer.current) return;
 
-    if (!MAPBOX_TOKEN || MAPBOX_TOKEN === 'pk.YOUR_TOKEN_HERE') {
+    if (!MAPBOX_TOKEN || MAPBOX_TOKEN === "pk.YOUR_TOKEN_HERE") {
       console.warn("Mapbox token is missing");
     }
 
@@ -30,25 +30,46 @@ export default function MapComponent({ route, center }: MapComponentProps) {
     try {
       map.current = new mapboxgl.Map({
         container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/streets-v11',
+        style: "mapbox://styles/mapbox/streets-v11",
         center: center || [103.8198, 1.3521], // Singapore default
-        zoom: 13
+        zoom: 13,
       });
 
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      map.current.addControl(new mapboxgl.NavigationControl(), "top-right");
     } catch (e) {
       console.error("Error initializing map:", e);
     }
 
+    // Cleanup on unmount only
     return () => {
       if (map.current) {
         map.current.remove();
         map.current = null;
       }
     };
-  }, [center]);
+  }, []); // Empty dependency array = mount once
 
-  // Draw route when it changes
+  // 2. Handle Center Updates (Fly to new location)
+  useEffect(() => {
+    if (!map.current || !center) return;
+
+    // Only fly if the distance is significant to avoid jitter
+    const currentCenter = map.current.getCenter();
+    const dist = Math.sqrt(
+      Math.pow(currentCenter.lng - center[0], 2) +
+        Math.pow(currentCenter.lat - center[1], 2)
+    );
+
+    if (dist > 0.0001) {
+      map.current.flyTo({
+        center: center,
+        zoom: 14,
+        essential: true,
+      });
+    }
+  }, [center ? center[0] : null, center ? center[1] : null]); // Depend on primitives, not array ref
+
+  // 3. Draw Route (Update Source/Layer)
   useEffect(() => {
     if (!map.current || !route) return;
 
@@ -56,76 +77,79 @@ export default function MapComponent({ route, center }: MapComponentProps) {
       if (!map.current) return;
 
       // Remove existing route if any
-      if (map.current.getSource('route')) {
-        map.current.removeLayer('route-line');
-        map.current.removeLayer('route-outline');
-        map.current.removeSource('route');
-      }
-
-      // Add route source
-      map.current.addSource('route', {
-        type: 'geojson',
-        data: {
-          type: 'Feature',
+      if (map.current.getSource("route")) {
+        // Just update data if source exists
+        (map.current.getSource("route") as mapboxgl.GeoJSONSource).setData({
+          type: "Feature",
           properties: {},
-          geometry: route
-        }
-      });
+          geometry: route,
+        });
+      } else {
+        // Add source and layers if new
+        map.current.addSource("route", {
+          type: "geojson",
+          data: {
+            type: "Feature",
+            properties: {},
+            geometry: route,
+          },
+        });
 
-      // Add outline layer (for better visibility)
-      map.current.addLayer({
-        id: 'route-outline',
-        type: 'line',
-        source: 'route',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': '#fff',
-          'line-width': 8,
-          'line-opacity': 0.8
-        }
-      });
+        // Add outline layer (for better visibility)
+        map.current.addLayer({
+          id: "route-outline",
+          type: "line",
+          source: "route",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": "#fff",
+            "line-width": 8,
+            "line-opacity": 0.8,
+          },
+        });
 
-      // Add main route layer
-      map.current.addLayer({
-        id: 'route-line',
-        type: 'line',
-        source: 'route',
-        layout: {
-          'line-join': 'round',
-          'line-cap': 'round'
-        },
-        paint: {
-          'line-color': STRAVA_ORANGE,
-          'line-width': 5,
-          'line-opacity': 1
-        }
-      });
+        // Add main route layer
+        map.current.addLayer({
+          id: "route-line",
+          type: "line",
+          source: "route",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": STRAVA_ORANGE,
+            "line-width": 5,
+            "line-opacity": 1,
+          },
+        });
+      }
 
       // Fit map to route bounds
       const coordinates = route.coordinates as [number, number][];
-      const bounds = coordinates.reduce(
-        (bounds, coord) => bounds.extend(coord),
-        new mapboxgl.LngLatBounds(coordinates[0], coordinates[0])
-      );
+      if (coordinates.length > 0) {
+        const bounds = coordinates.reduce(
+          (bounds, coord) => bounds.extend(coord),
+          new mapboxgl.LngLatBounds(coordinates[0], coordinates[0])
+        );
 
-      map.current.fitBounds(bounds, {
-        padding: 80,
-        duration: 1000
-      });
+        map.current.fitBounds(bounds, {
+          padding: 80,
+          duration: 1000,
+        });
+      }
     };
 
     // Wait for map to be loaded
     if (map.current.isStyleLoaded()) {
       drawRoute();
     } else {
-      map.current.on('load', drawRoute);
+      map.current.once("load", drawRoute);
     }
   }, [route]);
 
-  return (
-    <div ref={mapContainer} className="w-full h-full" />
-  );
+  return <div ref={mapContainer} className="w-full h-full" />;
 }

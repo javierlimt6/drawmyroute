@@ -114,6 +114,7 @@ export default function Home() {
     distance_m: number;
     duration_s: number;
   } | null>(null);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const {
     latitude,
@@ -776,13 +777,15 @@ export default function Home() {
               animation: "slideUp 0.3s ease-out",
             }}
           >
-            {/* Handle bar */}
+            {/* Handle bar - Click to toggle minimize */}
             <div
               style={{
                 display: "flex",
                 justifyContent: "center",
                 padding: "12px 0 8px",
+                cursor: "pointer",
               }}
+              onClick={() => setIsMinimized(!isMinimized)}
             >
               <div
                 style={{
@@ -794,7 +797,15 @@ export default function Home() {
               />
             </div>
 
-            <div style={{ padding: "0 24px 24px" }}>
+            <div
+              style={{
+                padding: "0 24px 24px",
+                maxHeight: isMinimized ? 0 : 500,
+                opacity: isMinimized ? 0 : 1,
+                overflow: "hidden",
+                transition: "all 0.3s ease-in-out",
+              }}
+            >
               {/* Title */}
               <Title level={4} style={{ marginBottom: 16, color: STRAVA_DARK }}>
                 Your Route is Ready! 🎉
@@ -850,22 +861,6 @@ export default function Home() {
                     /km
                   </Text>
                 </div>
-              </div>
-
-              {/* Motivational Quote */}
-              <div
-                style={{
-                  background: `linear-gradient(90deg, ${STRAVA_ORANGE}15, #FFD70015, #90EE9015)`,
-                  padding: "14px 18px",
-                  borderRadius: 12,
-                  marginBottom: 20,
-                  borderLeft: `3px solid ${STRAVA_ORANGE}`,
-                }}
-              >
-                <Text italic style={{ color: "#555", fontSize: 14 }}>
-                  "Sometimes the best journeys are the ones with no
-                  destination."
-                </Text>
               </div>
 
               {/* Action Buttons */}
