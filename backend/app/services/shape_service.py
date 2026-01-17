@@ -11,20 +11,20 @@ def load_shapes() -> dict:
     with open(SHAPES_PATH) as f:
         return json.load(f)
 
-def calculate_score(result: dict, target_distance_km: float, strategy_fidelity: float) -> float:
+def calculate_score(result: dict, target_distance_km: float, strategy: dict) -> float:
     """
-    Score a generated route based on quality metrics and strategy fidelity.
-    Higher score is better.
+    Weighted scoring: Fidelity > Closure > Efficiency
+    Higher score is better (0-100 scale).
     """
-    # Metric 1: Distance match (Efficiency)
-    actual_dist_km = result["distance_m"] / 1000.0
-    distance_diff = abs(actual_dist_km - target_distance_km)
+    # Weights (sum to 1.0)
+    W_FIDELITY = 0.70   # Shape quality is king
+    W_CLOSURE = 0.15    # Loop matters for running
+    W_EFFICIENCY = 0.15 # Distance is nice-to-have
     
-    # We want route length to be close to target. 
-    # Sigmoid-like decay: 1.0 at diff=0, 0.5 at diff=1km
-    efficiency_score = 1.0 / (distance_diff + 1.0)
+    # --- Fidelity Score (0-1) ---
+    fidelity_score = strategy["fidelity"]
     
-    # Metric 2: Circuit Closure
+    # --- Closure Score (0-1) ---
     coords = result["route"]["coordinates"]
     if not coords:
         return 0.0
@@ -32,18 +32,31 @@ def calculate_score(result: dict, target_distance_km: float, strategy_fidelity: 
     start_pt = coords[0]
     end_pt = coords[-1]
     
-    # Simple euclidean distance for closure check (approx degrees)
+    # Euclidean distance for closure check (in degrees)
     gap_deg = math.sqrt((start_pt[0]-end_pt[0])**2 + (start_pt[1]-end_pt[1])**2)
-    # Convert approx deg to meters (roughly)
-    gap_m = gap_deg * 111000 
+    gap_m = gap_deg * 111000  # Convert to meters
     
-    # Closure score: 1.0 if gap < 10m, drops as gap increases
+    # Closure: 1.0 if gap < 10m, drops smoothly
     closure_score = 1.0 / (gap_m / 100.0 + 1.0)
     
-    # Combined Score = Efficiency * Closure * Fidelity
-    # Fidelity penalty ensures we prefer "better shaped" routes (high points/low radius)
-    # even if a "loose" route matches distance slightly better.
-    final_score = efficiency_score * closure_score * strategy_fidelity * 100
+    # --- Efficiency Score (0-1) ---
+    actual_dist_km = result["distance_m"] / 1000.0
+    if target_distance_km > 0:
+        distance_ratio = actual_dist_km / target_distance_km
+        # Accept 0.7x to 1.5x target as "good enough"
+        if 0.7 <= distance_ratio <= 1.5:
+            efficiency_score = 1.0 - abs(1.0 - distance_ratio) * 0.5
+        else:
+            efficiency_score = 0.3  # Penalty but don't kill the score
+    else:
+        efficiency_score = 0.5
+    
+    # --- Weighted Sum ---
+    final_score = (
+        W_FIDELITY * fidelity_score +
+        W_CLOSURE * closure_score +
+        W_EFFICIENCY * efficiency_score
+    ) * 100
     
     return final_score
 
@@ -61,30 +74,33 @@ async def generate_route_from_shape(
     
     svg_path = shapes[shape_id]["svg_path"]
     
-    # Strategies: 10 variations from Perfect to Desperate
-    # Fidelity: 1.0 (Best) -> 0.5 (Worst)
+    # Calculate distance-proportional radius
+    # For a 5km route, base radius ~100m. For 20km route, ~400m
+    # This prevents overlapping/backtracking on longer routes
+    base_radius = max(50, int(distance_km * 20))  # 20m per km, min 50m
+    
+    print(f"   📏 Distance: {distance_km}km -> Base radius: {base_radius}m")
+    
+    # Strategies: Fewer points with distance-scaled radius
+    # Fewer points = more spread out = less overlap
     strategies = [
-        # High Fidelity (Sharp Shape)
-        {"points": 16, "radius": 50,  "profile": "walking", "fidelity": 1.0},
-        {"points": 16, "radius": 100, "profile": "walking", "fidelity": 0.95},
+        # High Fidelity - 30 points works well for most shapes
+        {"points": 30, "radius": base_radius,       "profile": "walking", "fidelity": 1.0},
+        {"points": 30, "radius": base_radius * 2,   "profile": "walking", "fidelity": 0.95},
+        {"points": 30, "radius": base_radius * 3,   "profile": "walking", "fidelity": 0.90},
         
-        # Standard (Balanced)
-        {"points": 12, "radius": 100, "profile": "walking", "fidelity": 0.9},
-        {"points": 12, "radius": 200, "profile": "walking", "fidelity": 0.85},
+        # Medium Fidelity - 20 points for sparser areas
+        {"points": 20, "radius": base_radius * 2,   "profile": "walking", "fidelity": 0.80},
+        {"points": 20, "radius": base_radius * 4,   "profile": "walking", "fidelity": 0.70},
         
-        # Simpler Shapes (Less Detailed)
-        {"points": 10, "radius": 200, "profile": "walking", "fidelity": 0.8},
-        {"points": 8,  "radius": 300, "profile": "walking", "fidelity": 0.75},
+        # Fallback
+        {"points": 15, "radius": base_radius * 5,   "profile": "walking", "fidelity": 0.50},
         
-        # Loose/Fallback (Very Forgiving)
-        {"points": 6,  "radius": 500, "profile": "walking", "fidelity": 0.6},
-        
-        # Alternative Profiles (Bike paths might exist where sidewalks don't)
-        {"points": 12, "radius": 200, "profile": "cycling", "fidelity": 0.6},
-        {"points": 8,  "radius": 500, "profile": "cycling", "fidelity": 0.5},
+        # Cycling fallback (bike paths may exist where sidewalks don't)
+        {"points": 20, "radius": base_radius * 3,   "profile": "cycling", "fidelity": 0.40},
         
         # Last Resort
-        {"points": 5,  "radius": 1000, "profile": "walking", "fidelity": 0.4},
+        {"points": 10, "radius": base_radius * 10,  "profile": "walking", "fidelity": 0.20},
     ]
     
     successful_results = []
@@ -105,8 +121,8 @@ async def generate_route_from_shape(
                 radius=strategy["radius"]
             )
             
-            # 3. Calculate Score
-            score = calculate_score(result, distance_km, strategy["fidelity"])
+            # 3. Calculate Score (pass full strategy dict now)
+            score = calculate_score(result, distance_km, strategy)
             
             result_data = {
                 "shape_id": shape_id,
@@ -121,9 +137,9 @@ async def generate_route_from_shape(
             successful_results.append(result_data)
             print(f"   ✅ Strategy {strategy['points']}pts/{strategy['radius']}m -> Score: {score:.2f} (Dist: {result['distance_m']:.0f}m)")
             
-            # Stop if we found a "Great" match (Score > 80)
-            # This prevents wasting API calls if the first try was perfect.
-            if score > 80.0:
+            # Early exit: High fidelity (≥0.9) AND good score (>75)
+            # This ensures we pick a high-quality shape if it works
+            if strategy["fidelity"] >= 0.9 and score > 75.0:
                  break
             
         except Exception as e:
@@ -136,9 +152,10 @@ async def generate_route_from_shape(
         
     # Pick the best result
     best_result = max(successful_results, key=lambda x: x["score"])
-    print(f"🏆 Selected best route from {len(successful_results)} candidates (Score: {best_result['score']:.2f})")
+    print(f"🏆 Best from {len(successful_results)} candidates (Score: {best_result['score']:.2f})")
+    print(f"🏁 Final: {best_result['strategy']['points']}pts, Dist: {best_result['distance_m']:.0f}m")
     
-    # Add debug info to response so frontend/client can see it
+    # Add debug info to response
     best_result["debug_log"] = [
         f"Strategy {r['strategy']['points']}pts/{r['strategy']['radius']}m -> Score: {r['score']:.1f}"
         for r in successful_results
