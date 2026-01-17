@@ -32,30 +32,85 @@ const STRAVA_DARK = "#1A1A1A";
 
 type InputMode = "type" | "draw";
 
+interface PredefinedShape {
+  id: string;
+  name: string;
+  emoji: string;
+  prompt: string;
+}
+
+const PREDEFINED_SHAPES: PredefinedShape[] = [
+  { id: "heart", name: "Heart", emoji: "❤️", prompt: "A route shaped like a heart" },
+  { id: "star", name: "Star", emoji: "⭐", prompt: "A route shaped like a 5-point star" },
+  { id: "circle", name: "Circle", emoji: "⭕", prompt: "A circular loop route" },
+  { id: "figure8", name: "Figure 8", emoji: "♾️", prompt: "A route shaped like a figure 8" },
+  { id: "lightning", name: "Lightning", emoji: "⚡", prompt: "A route shaped like a lightning bolt" },
+  { id: "dinosaur", name: "Dinosaur", emoji: "🦖", prompt: "A route shaped like a T-Rex dinosaur" },
+  { id: "singapore", name: "SG", emoji: "🇸🇬", prompt: "A route shaped like Singapore's outline" },
+  { id: "merlion", name: "Merlion", emoji: "🦁", prompt: "A route shaped like the Merlion" },
+];
+
 export default function Home() {
   const [showModal, setShowModal] = useState(true);
   const [mode, setMode] = useState<InputMode>("type");
   const [prompt, setPrompt] = useState("");
-  const [distance, setDistance] = useState(5); // km
+  const [selectedShape, setSelectedShape] = useState<string | null>(null);
+  const [distance, setDistance] = useState(5); // Always stored in km
+  const [unit, setUnit] = useState<"km" | "mi">("km");
   const [searchValue, setSearchValue] = useState("");
-  const { latitude, loading: locationLoading, getCurrentLocation } = useLocation();
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generatedRoute, setGeneratedRoute] = useState<GeoJSON.LineString | null>(null);
+  const { latitude, longitude, loading: locationLoading, getCurrentLocation } = useLocation();
 
-  const handleGenerate = () => {
-    if (!latitude) {
+  // Conversion helpers
+  const KM_TO_MI = 0.621371;
+  const MI_TO_KM = 1.60934;
+  
+  const displayDistance = unit === "km" ? distance : distance * KM_TO_MI;
+  const setDistanceFromDisplay = (val: number) => {
+    setDistance(unit === "km" ? val : val * MI_TO_KM);
+  };
+
+  // Mock route generation (replace with real API later)
+  const handleGenerate = async () => {
+    if (!latitude || !longitude) {
       getCurrentLocation();
       return;
     }
+    
+    setIsGenerating(true);
+    
+    // Simulate API call delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Mock heart-shaped route centered on user location
+    const mockRoute: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: [
+        [longitude, latitude],
+        [longitude + 0.008, latitude + 0.012],
+        [longitude + 0.016, latitude + 0.008],
+        [longitude + 0.012, latitude],
+        [longitude + 0.016, latitude - 0.008],
+        [longitude + 0.008, latitude - 0.012],
+        [longitude, latitude],
+        [longitude - 0.008, latitude - 0.012],
+        [longitude - 0.016, latitude - 0.008],
+        [longitude - 0.012, latitude],
+        [longitude - 0.016, latitude + 0.008],
+        [longitude - 0.008, latitude + 0.012],
+        [longitude, latitude],
+      ]
+    };
+    
+    setGeneratedRoute(mockRoute);
+    setIsGenerating(false);
     setShowModal(false);
-    // TODO: Call backend API with prompt, distance, lat/lng
   };
 
-  const distanceMarks = {
-    1: "1km",
-    5: "5km",
-    10: "10km",
-    15: "15km",
-    20: "20km",
-  };
+  const distanceMarks = unit === "km" 
+    ? { 1: "1", 5: "5", 10: "10", 15: "15", 20: "20" }
+    : { 1: "0.6", 5: "3", 10: "6", 15: "9", 20: "12" };
 
   return (
     <ConfigProvider
@@ -139,7 +194,10 @@ export default function Home() {
 
         {/* Map with overlay */}
         <div style={{ position: "relative", width: "100%", height: "100%" }}>
-          <MapComponent />
+          <MapComponent 
+            route={generatedRoute} 
+            center={longitude && latitude ? [longitude, latitude] : undefined}
+          />
           {showModal && (
             <div
               style={{
@@ -168,54 +226,24 @@ export default function Home() {
             <Card
               style={{
                 width: "100%",
-                maxWidth: 440,
+                maxWidth: 400,
+                maxHeight: "85vh",
+                overflowY: "auto",
                 borderRadius: 12,
                 boxShadow: "0 12px 40px rgba(0,0,0,0.3)",
                 border: "none",
               }}
-              styles={{ body: { padding: 32 } }}
+              styles={{ body: { padding: "20px 24px" } }}
             >
-              {/* Icon */}
-              <div style={{ textAlign: "center", marginBottom: 20 }}>
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: "50%",
-                    background: `linear-gradient(135deg, ${STRAVA_ORANGE}, #FF6B35)`,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <svg width="32" height="32" viewBox="0 0 24 24" fill="#fff">
-                    <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                  </svg>
-                </div>
+              {/* Title - Compact */}
+              <div style={{ textAlign: "center", marginBottom: 16 }}>
+                <Title level={4} style={{ margin: 0, fontWeight: 700, color: STRAVA_DARK }}>
+                  🗺️ DrawMyRoute
+                </Title>
+                <Text style={{ fontSize: 12, color: "#888" }}>
+                  Create custom routes shaped to your imagination
+                </Text>
               </div>
-
-              {/* Title */}
-              <Title
-                level={2}
-                style={{
-                  textAlign: "center",
-                  marginBottom: 8,
-                  fontWeight: 700,
-                  color: STRAVA_DARK,
-                }}
-              >
-                Draw Your Route
-              </Title>
-              <Text
-                style={{
-                  display: "block",
-                  textAlign: "center",
-                  color: "#666",
-                  marginBottom: 24,
-                }}
-              >
-                Create custom routes shaped to your imagination
-              </Text>
 
               {/* Location Search */}
               <Input
@@ -235,6 +263,59 @@ export default function Home() {
                 onChange={(e) => setSearchValue(e.target.value)}
                 style={{ marginBottom: 20, borderRadius: 8, height: 48 }}
               />
+
+              {/* Predefined Shapes Selector */}
+              <div style={{ marginBottom: 16 }}>
+                <Text strong style={{ display: "block", marginBottom: 10, color: STRAVA_DARK }}>
+                  Quick Pick a Shape
+                </Text>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    overflowX: "auto",
+                    paddingBottom: 8,
+                    scrollbarWidth: "thin",
+                  }}
+                >
+                  {PREDEFINED_SHAPES.map((shape) => (
+                    <div
+                      key={shape.id}
+                      onClick={() => {
+                        if (selectedShape === shape.id) {
+                          setSelectedShape(null);
+                          setPrompt("");
+                        } else {
+                          setSelectedShape(shape.id);
+                          setPrompt(shape.prompt);
+                        }
+                      }}
+                      style={{
+                        minWidth: 72,
+                        padding: "12px 8px",
+                        borderRadius: 12,
+                        border: selectedShape === shape.id 
+                          ? `2px solid ${STRAVA_ORANGE}` 
+                          : "2px solid #eee",
+                        background: selectedShape === shape.id ? "#FFF5F0" : "#fff",
+                        cursor: "pointer",
+                        textAlign: "center",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      <div style={{ fontSize: 28, marginBottom: 4 }}>{shape.emoji}</div>
+                      <Text style={{ fontSize: 11, color: "#666" }}>{shape.name}</Text>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* OR Divider */}
+              <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+                <div style={{ flex: 1, height: 1, background: "#eee" }} />
+                <Text style={{ padding: "0 10px", color: "#bbb", fontSize: 11 }}>OR</Text>
+                <div style={{ flex: 1, height: 1, background: "#eee" }} />
+              </div>
 
               {/* Mode Toggle */}
               <Segmented
@@ -268,12 +349,15 @@ export default function Home() {
               {mode === "type" ? (
                 <TextArea
                   value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="e.g., A route shaped like a dinosaur, a heart, a star..."
-                  autoSize={{ minRows: 3, maxRows: 4 }}
+                  onChange={(e) => {
+                    setPrompt(e.target.value);
+                    setSelectedShape(null);
+                  }}
+                  placeholder="e.g., A route shaped like a dinosaur..."
+                  autoSize={{ minRows: 2, maxRows: 3 }}
                   showCount
                   maxLength={200}
-                  style={{ marginBottom: 20 }}
+                  style={{ marginBottom: 12 }}
                 />
               ) : (
                 <div
@@ -294,48 +378,197 @@ export default function Home() {
 
               {/* Target Distance */}
               <div style={{ marginBottom: 24 }}>
-                <Text strong style={{ display: "block", marginBottom: 12, color: STRAVA_DARK }}>
-                  Target Distance: <span style={{ color: STRAVA_ORANGE }}>{distance} km</span>
-                </Text>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
+                  <Text strong style={{ color: STRAVA_DARK }}>
+                    Target Distance:
+                  </Text>
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min={0.5}
+                    max={100}
+                    value={displayDistance.toFixed(1)}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value) || 0.5;
+                      setDistanceFromDisplay(Math.min(100, Math.max(0.5, val)));
+                    }}
+                    style={{
+                      width: 70,
+                      fontWeight: 700,
+                      color: STRAVA_ORANGE,
+                      textAlign: "center",
+                    }}
+                  />
+                  <Segmented
+                    size="small"
+                    value={unit}
+                    onChange={(val) => setUnit(val as "km" | "mi")}
+                    options={[
+                      { label: "km", value: "km" },
+                      { label: "mi", value: "mi" },
+                    ]}
+                  />
+                </div>
                 <Slider
                   min={1}
                   max={20}
-                  value={distance}
+                  step={0.5}
+                  value={Math.min(distance, 20)}
                   onChange={setDistance}
                   marks={distanceMarks}
-                  tooltip={{ formatter: (val) => `${val} km` }}
+                  tooltip={{ formatter: (val) => `${unit === "km" ? val : (val! * KM_TO_MI).toFixed(1)} ${unit}` }}
                   styles={{
                     track: { background: STRAVA_ORANGE },
                     rail: { background: "#eee" },
                   }}
                 />
+                {distance > 20 && (
+                  <Text style={{ fontSize: 11, color: "#999", marginTop: 4, display: "block" }}>
+                    Custom: {displayDistance.toFixed(1)} {unit} (slider max is {unit === "km" ? "20 km" : "12.4 mi"})
+                  </Text>
+                )}
               </div>
 
               {/* CTA Button */}
               <Button
                 block
                 size="large"
-                disabled={mode === "type" && !prompt.trim()}
+                disabled={(mode === "type" && !prompt.trim()) || isGenerating}
                 onClick={handleGenerate}
-                icon={<RocketOutlined />}
+                loading={isGenerating}
+                icon={!isGenerating ? <RocketOutlined /> : undefined}
                 style={{
                   borderRadius: 8,
-                  height: 52,
-                  fontSize: 16,
+                  height: 48,
+                  fontSize: 14,
                   fontWeight: 700,
                   textTransform: "uppercase",
                   letterSpacing: 1,
-                  background: (mode === "type" && prompt.trim()) || mode === "draw" ? STRAVA_ORANGE : "#f0f0f0",
-                  color: (mode === "type" && prompt.trim()) || mode === "draw" ? "#fff" : "#999",
+                  background: ((mode === "type" && prompt.trim()) || mode === "draw") && !isGenerating ? STRAVA_ORANGE : "#f0f0f0",
+                  color: ((mode === "type" && prompt.trim()) || mode === "draw") && !isGenerating ? "#fff" : "#999",
                   border: "none",
-                  boxShadow: (mode === "type" && prompt.trim()) || mode === "draw" ? `0 4px 12px ${STRAVA_ORANGE}40` : "none",
+                  boxShadow: ((mode === "type" && prompt.trim()) || mode === "draw") && !isGenerating ? `0 4px 12px ${STRAVA_ORANGE}40` : "none",
                 }}
               >
-                {latitude ? "Generate Route" : "Get Location & Generate"}
+                {isGenerating ? "Generating..." : latitude ? "Generate Route" : "Get Location & Generate"}
               </Button>
             </Card>
           </div>
         )}
+
+        {/* Slide-up Route Details Panel */}
+        {generatedRoute && !showModal && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              zIndex: 15,
+              background: "#fff",
+              borderRadius: "20px 20px 0 0",
+              boxShadow: "0 -4px 20px rgba(0,0,0,0.15)",
+              animation: "slideUp 0.3s ease-out",
+            }}
+          >
+            {/* Handle bar */}
+            <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 8px" }}>
+              <div style={{ width: 40, height: 4, background: "#ddd", borderRadius: 2 }} />
+            </div>
+
+            <div style={{ padding: "0 24px 24px" }}>
+              {/* Title */}
+              <Title level={4} style={{ marginBottom: 16, color: STRAVA_DARK }}>
+                Your Route is Ready! 🎉
+              </Title>
+
+              {/* Stats Row */}
+              <div style={{ display: "flex", gap: 24, marginBottom: 20 }}>
+                <div>
+                  <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Distance</Text>
+                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
+                    {unit === "km" ? `${distance.toFixed(1)} km` : `${(distance * KM_TO_MI).toFixed(1)} mi`}
+                  </Text>
+                </div>
+                <div>
+                  <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Est. Time</Text>
+                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
+                    {Math.round(distance * 6)} min
+                  </Text>
+                </div>
+                <div>
+                  <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Pace</Text>
+                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
+                    6:00 /km
+                  </Text>
+                </div>
+              </div>
+
+              {/* Motivational Quote */}
+              <div
+                style={{
+                  background: `linear-gradient(90deg, ${STRAVA_ORANGE}15, #FFD70015, #90EE9015)`,
+                  padding: "14px 18px",
+                  borderRadius: 12,
+                  marginBottom: 20,
+                  borderLeft: `3px solid ${STRAVA_ORANGE}`,
+                }}
+              >
+                <Text italic style={{ color: "#555", fontSize: 14 }}>
+                  "Sometimes the best journeys are the ones with no destination."
+                </Text>
+              </div>
+
+              {/* Action Buttons */}
+              <Space style={{ width: "100%" }} direction="vertical" size="small">
+                <Button
+                  block
+                  size="large"
+                  type="primary"
+                  icon={<RocketOutlined />}
+                  style={{
+                    background: STRAVA_ORANGE,
+                    borderColor: STRAVA_ORANGE,
+                    borderRadius: 10,
+                    height: 48,
+                    fontWeight: 600,
+                  }}
+                  onClick={() => {
+                    // TODO: Open in Strava or start navigation
+                    window.open(`https://www.google.com/maps/dir/?api=1&origin=${latitude},${longitude}&destination=${latitude},${longitude}&travelmode=walking`, '_blank');
+                  }}
+                >
+                  Start Route
+                </Button>
+                <Button
+                  block
+                  size="large"
+                  style={{ borderRadius: 10, height: 44 }}
+                  onClick={() => {
+                    setShowModal(true);
+                    setGeneratedRoute(null);
+                  }}
+                >
+                  Generate New Route
+                </Button>
+              </Space>
+            </div>
+          </div>
+        )}
+
+        {/* CSS Animation */}
+        <style jsx global>{`
+          @keyframes slideUp {
+            from {
+              transform: translateY(100%);
+              opacity: 0;
+            }
+            to {
+              transform: translateY(0);
+              opacity: 1;
+            }
+          }
+        `}</style>
       </main>
     </ConfigProvider>
   );
