@@ -241,9 +241,11 @@ async def generate_route_osrm(
     distance_km: float
 ) -> dict:
     """
-    Generate route using OSRM point-to-point routing.
-    Routes each consecutive pair of points separately for cleaner paths.
+    Generate route using OSRM with multi-variant optimization.
+    Tests multiple rotations and sizes in parallel to find the best fit.
     """
+    import asyncio
+    
     shapes = load_shapes()
     
     if shape_id not in shapes:
@@ -251,37 +253,143 @@ async def generate_route_osrm(
     
     svg_path = shapes[shape_id]["svg_path"]
     
-    print(f"🔄 [OSRM] Generating '{shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
+    print(f"🔄 [OSRM Multi-Variant] Generating '{shape_id}' ({distance_km}km)")
     
-    # Use 50 points for maximum fidelity
-    num_points = 50
+    # Configuration for grid search
+    NUM_POINTS = 80  # Higher point count for smoother curves
+    ROTATIONS = [0, 45, 90, 135]  # Degrees
+    SCALE_FACTORS = [0.6, 0.8, 1.0, 1.2]  # Size multipliers
     
-    # 1. Parse & Scale
-    abstract_points = sample_svg_path(svg_path, num_points=num_points)
-    gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km)
+    # Parse SVG once
+    abstract_points = sample_svg_path(svg_path, num_points=NUM_POINTS)
     
-    # 2. Route using OSRM point-to-point
-    result = await snap_to_roads_osrm(gps_points, profile="foot")
+    # Generate all variant combinations
+    variants = []
+    for rotation in ROTATIONS:
+        for scale in SCALE_FACTORS:
+            variants.append({
+                "rotation": rotation,
+                "scale": scale,
+                "label": f"R{rotation}°/S{scale}"
+            })
     
-    # 3. Calculate score (use fidelity=1.0 since this is our best-effort)
-    strategy = {"points": num_points, "fidelity": 1.0, "profile": "foot"}
-    score = calculate_score(result, distance_km, strategy)
+    print(f"   🔀 Testing {len(variants)} variants ({len(ROTATIONS)} rotations × {len(SCALE_FACTORS)} sizes)")
     
+    # Quality thresholds (adjustable)
+    MAX_FAILED_SEGMENT_RATIO = 0.15  # Max 15% failed segments
+    MAX_DISTANCE_RATIO = 2.5         # Route can't be >2.5x target
+    MIN_DISTANCE_RATIO = 0.3         # Route can't be <30% of target
+    MIN_ACCEPTABLE_SCORE = 40.0      # Minimum score to accept
+    
+    async def evaluate_variant(variant: dict) -> dict:
+        """Evaluate a single variant and return result with score."""
+        try:
+            # Scale with rotation and size
+            gps_points = scale_to_gps(
+                abstract_points,
+                start_lat, start_lng,
+                distance_km,
+                scale_factor=variant["scale"],
+                rotation_deg=variant["rotation"]
+            )
+            
+            # Route using OSRM
+            result = await snap_to_roads_osrm(gps_points, profile="foot")
+            
+            # --- QUALITY CHECKS ---
+            failed_ratio = result.get("failed_segments", 0) / result.get("total_segments", 1)
+            actual_km = result["distance_m"] / 1000.0
+            distance_ratio = actual_km / distance_km
+            
+            # Check if this variant is acceptable
+            rejection_reasons = []
+            if failed_ratio > MAX_FAILED_SEGMENT_RATIO:
+                rejection_reasons.append(f"too many failed segments ({failed_ratio*100:.0f}%)")
+            if distance_ratio > MAX_DISTANCE_RATIO:
+                rejection_reasons.append(f"route too long ({distance_ratio:.1f}x target)")
+            if distance_ratio < MIN_DISTANCE_RATIO:
+                rejection_reasons.append(f"route too short ({distance_ratio:.1f}x target)")
+            
+            if rejection_reasons:
+                return {
+                    "success": False, 
+                    "variant": variant, 
+                    "error": "; ".join(rejection_reasons),
+                    "distance_m": result["distance_m"],
+                    "failed_ratio": failed_ratio
+                }
+            
+            # Calculate score
+            strategy = {"points": NUM_POINTS, "fidelity": 1.0, "profile": "foot"}
+            score = calculate_score(result, distance_km, strategy)
+            
+            # Penalize based on failed segments and distance accuracy
+            distance_accuracy = 1.0 - abs(distance_ratio - 1.0)
+            segment_quality = 1.0 - failed_ratio
+            adjusted_score = score * (0.5 + 0.25 * max(0, distance_accuracy) + 0.25 * segment_quality)
+            
+            return {
+                "success": True,
+                "variant": variant,
+                "gps_points": gps_points,
+                "result": result,
+                "score": adjusted_score,
+                "distance_m": result["distance_m"],
+                "failed_ratio": failed_ratio
+            }
+        except Exception as e:
+            return {"success": False, "variant": variant, "error": str(e)}
+    
+    # Run all variants in parallel
+    results = await asyncio.gather(*[evaluate_variant(v) for v in variants])
+    
+    # Filter successful results that meet minimum score
+    successful = [r for r in results if r.get("success") and r.get("score", 0) >= MIN_ACCEPTABLE_SCORE]
+    rejected = [r for r in results if not r.get("success")]
+    
+    # Log rejection reasons
+    if rejected:
+        print(f"   ⚠️ {len(rejected)} variants rejected:")
+        for r in rejected[:3]:
+            print(f"      {r['variant']['label']}: {r.get('error', 'unknown')}")
+    
+    if not successful:
+        # No good routes found
+        raise ValueError(
+            f"Could not find a good route for this location. "
+            f"Tried {len(variants)} variants, all failed quality checks. "
+            f"Try a different starting location with more walkable roads."
+        )
+    
+    # Pick the best
+    best = max(successful, key=lambda x: x["score"])
+    
+    # Log results
+    print(f"   📊 Results: {len(successful)}/{len(variants)} passed quality checks")
+    for r in sorted(successful, key=lambda x: -x["score"])[:5]:
+        print(f"      {r['variant']['label']}: Score {r['score']:.1f}, Dist: {r['distance_m']:.0f}m")
+    
+    print(f"🏆 Best: {best['variant']['label']} (Score: {best['score']:.1f})")
+    
+    # Build final result
     result_data = {
         "shape_id": shape_id,
         "shape_name": shapes[shape_id]["name"],
         "original_points": abstract_points,
-        "gps_points": gps_points,
-        "score": score,
-        "strategy": strategy,
-        "algorithm": "osrm",
-        **result
+        "gps_points": best["gps_points"],
+        "score": best["score"],
+        "strategy": {
+            "points": NUM_POINTS,
+            "fidelity": 1.0,
+            "rotation": best["variant"]["rotation"],
+            "scale": best["variant"]["scale"]
+        },
+        "algorithm": "osrm-multivariant",
+        **best["result"]
     }
     
-    print(f"🏆 [OSRM] Score: {score:.2f}, Dist: {result['distance_m']:.0f}m")
-    
     # Calculate approach/return distances
-    route_coords = result["route"]["coordinates"]
+    route_coords = best["result"]["route"]["coordinates"]
     if route_coords:
         route_start = route_coords[0]
         route_end = route_coords[-1]
@@ -296,16 +404,18 @@ async def generate_route_osrm(
         
         result_data["approach_distance_m"] = round(approach_m, 1)
         result_data["return_distance_m"] = round(return_m, 1)
-        result_data["total_with_travel_m"] = round(result["distance_m"] + approach_m + return_m, 1)
-        
-        print(f"   📍 Approach: {approach_m:.0f}m, Return: {return_m:.0f}m")
-        print(f"🏁 Shape: {result['distance_m']:.0f}m, Total w/ travel: {result_data['total_with_travel_m']:.0f}m")
+        result_data["total_with_travel_m"] = round(best["result"]["distance_m"] + approach_m + return_m, 1)
     else:
         result_data["approach_distance_m"] = 0
         result_data["return_distance_m"] = 0
-        result_data["total_with_travel_m"] = result["distance_m"]
+        result_data["total_with_travel_m"] = best["result"]["distance_m"]
     
-    result_data["debug_log"] = [f"OSRM point-to-point: {num_points} points"]
+    # Debug log
+    result_data["debug_log"] = [
+        f"Multi-variant: {len(variants)} candidates",
+        f"Best: {best['variant']['label']}",
+        f"Top 3: {', '.join(r['variant']['label'] for r in sorted(successful, key=lambda x: -x['score'])[:3])}"
+    ]
     
     return result_data
 

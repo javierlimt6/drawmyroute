@@ -1,20 +1,21 @@
 """
 OSRM Point-to-Point Router
 
-Routes between each consecutive pair of GPS points using OSRM's free API.
+Routes between each consecutive pair of GPS points using OSRM.
 Each segment is the shortest path, avoiding the cross-back issues of chunked routing.
 """
 
 import httpx
 import asyncio
 from typing import Optional
+from app.config import settings
 
-# Free public OSRM demo server (rate limited)
-OSRM_BASE_URL = "https://router.project-osrm.org"
+# Use configured OSRM URL (defaults to local Docker container)
+OSRM_BASE_URL = settings.OSRM_URL
 
-# Rate limiting: max concurrent requests and delay between batches
-MAX_CONCURRENT = 5
-BATCH_DELAY_MS = 100
+# Local server is fast - can handle more concurrent requests
+MAX_CONCURRENT = 20
+BATCH_DELAY_MS = 0  # No delay needed for local server
 
 
 async def route_segment_osrm(
@@ -155,5 +156,7 @@ async def snap_to_roads_osrm(
     return {
         "route": {"type": "LineString", "coordinates": all_coords},
         "distance_m": total_distance,
-        "duration_s": total_duration
+        "duration_s": total_duration,
+        "failed_segments": failed_segments,
+        "total_segments": num_segments
     }

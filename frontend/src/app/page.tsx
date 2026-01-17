@@ -132,6 +132,12 @@ const PREDEFINED_SHAPES: PredefinedShape[] = [
     emoji: "👍",
     prompt: "A route shaped like a thumbs up",
   },
+  {
+    id: "sword",
+    name: "Sword",
+    emoji: "⚔️",
+    prompt: "A route shaped like a sword",
+  },
 ];
 
 export default function Home() {
