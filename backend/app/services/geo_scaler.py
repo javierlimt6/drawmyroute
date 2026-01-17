@@ -79,9 +79,9 @@ def scale_to_gps(
         abstract_perimeter = 4.0  # Assume square-like
     
     # --- STEP 4: Calculate scale to match target distance ---
-    # Road detour factor: roads add ~30% to straight-line distance on average
-    # This is empirical and can be tuned based on testing
-    ROAD_DETOUR_FACTOR = 1.3
+    # Road detour factor: roads typically add 50-70% to straight-line perimeter
+    # Increased from 1.3 to 1.6 after testing showed routes running too long
+    ROAD_DETOUR_FACTOR = 1.6
     
     # We want: scaled_perimeter_km * ROAD_DETOUR_FACTOR ≈ distance_km
     target_perimeter_km = distance_km / ROAD_DETOUR_FACTOR

@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+import RouteResizeOverlay from "./RouteResizeOverlay";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "";
 const STRAVA_ORANGE = "#FC4C02";
@@ -10,12 +11,24 @@ const STRAVA_ORANGE = "#FC4C02";
 interface MapComponentProps {
   route?: GeoJSON.LineString | null;
   center?: [number, number]; // [lng, lat]
+  onResize?: (aspectRatio: number) => void;
+  onMove?: (newLat: number, newLng: number) => void;
+  isResizing?: boolean;
+  svgPath?: string | null;
+  showOverlay?: boolean;
 }
 
-export default function MapComponent({ route, center }: MapComponentProps) {
+export default function MapComponent({ route, center, onResize, onMove, isResizing = false, svgPath, showOverlay = true }: MapComponentProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const marker = useRef<mapboxgl.Marker | null>(null);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const [routeBounds, setRouteBounds] = useState<{
+    minLng: number;
+    maxLng: number;
+    minLat: number;
+    maxLat: number;
+  } | null>(null);
 
   // 1. Initialize map (RUNS ONLY ONCE)
   useEffect(() => {
@@ -37,6 +50,8 @@ export default function MapComponent({ route, center }: MapComponentProps) {
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), "top-right");
+      
+      map.current.on("load", () => setMapLoaded(true));
     } catch (e) {
       console.error("Error initializing map:", e);
     }
@@ -105,6 +120,19 @@ export default function MapComponent({ route, center }: MapComponentProps) {
     const drawRoute = () => {
       if (!map.current) return;
 
+      // Calculate route bounds for resize overlay
+      const coordinates = route.coordinates as [number, number][];
+      if (coordinates.length > 0) {
+        const lngs = coordinates.map(c => c[0]);
+        const lats = coordinates.map(c => c[1]);
+        setRouteBounds({
+          minLng: Math.min(...lngs),
+          maxLng: Math.max(...lngs),
+          minLat: Math.min(...lats),
+          maxLat: Math.max(...lats),
+        });
+      }
+
       // Remove existing route if any
       if (map.current.getSource("route")) {
         // Just update data if source exists
@@ -157,9 +185,8 @@ export default function MapComponent({ route, center }: MapComponentProps) {
         });
       }
 
-      // Fit map to route bounds
-      const coordinates = route.coordinates as [number, number][];
-      if (coordinates.length > 0) {
+      // Fit map to route bounds (skip during resize/move to prevent zoom)
+      if (coordinates.length > 0 && !isResizing) {
         const bounds = coordinates.reduce(
           (bounds, coord) => bounds.extend(coord),
           new mapboxgl.LngLatBounds(coordinates[0], coordinates[0])
@@ -180,6 +207,32 @@ export default function MapComponent({ route, center }: MapComponentProps) {
     }
   }, [route]);
 
-  return <div ref={mapContainer} className="w-full h-full" />;
-}
+  // Handle resize from overlay
+  const handleOverlayResize = useCallback((aspectRatioMultiplier: number) => {
+    if (onResize) {
+      onResize(aspectRatioMultiplier);
+    }
+  }, [onResize]);
 
+  // Handle move from overlay
+  const handleOverlayMove = useCallback((newLat: number, newLng: number) => {
+    if (onMove) {
+      onMove(newLat, newLng);
+    }
+  }, [onMove]);
+
+  return (
+    <div ref={mapContainer} className="w-full h-full" style={{ position: "relative" }}>
+      {mapLoaded && route && onResize && showOverlay && (
+        <RouteResizeOverlay
+          bounds={routeBounds}
+          mapRef={map.current}
+          onResize={handleOverlayResize}
+          onMove={onMove ? handleOverlayMove : undefined}
+          disabled={isResizing}
+          svgPath={svgPath}
+        />
+      )}
+    </div>
+  );
+}

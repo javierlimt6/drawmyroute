@@ -287,9 +287,9 @@ async def generate_route_osrm(
         print(f"⚡ [OSRM Fast] Generating '{current_shape_id}' ({distance_km}km)")
     else:
         NUM_POINTS = 80  # Higher point count for smoother curves
-        ROTATIONS = [0, 45, 90, 135]  # Degrees
-        # Perimeter-based scaling is more accurate, so narrower range + fine-tuning
-        SCALE_FACTORS = [0.8, 0.9, 1.0, 1.1, 1.2, 1.3]  # Fine-tune around expected
+        ROTATIONS = [0, 90]  # Reduced from 4 to 2 for speed
+        # Wider scale range: smaller values help when roads add more distance
+        SCALE_FACTORS = [0.5, 0.7, 0.9, 1.0, 1.1]  # 5 values for 10 total variants
         print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km)")
     
     # Parse SVG once
