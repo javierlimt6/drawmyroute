@@ -60,6 +60,15 @@ def main():
         print(f"⏱️ Duration: {data['duration_s']/60:.1f} minutes")
         print(f"ℹ️  Shape: {data.get('shape_name', 'Unknown')}")
         
+        # Print Strategy & Score details
+        print(f"\n📊 Selection Metrics:")
+        print(f"🏆 Final Score: {data.get('score', 0):.2f}")
+        
+        if 'debug_log' in data:
+            print("\n📝 Strategy Log:")
+            for log in data['debug_log']:
+                print(f"   {log}")
+        
     except Exception as e:
         print(f"❌ Connection Failed: {e}")
         print("Make sure the backend is running: uvicorn app.main:app --reload")
