@@ -7,11 +7,15 @@ class RouteRequest(BaseModel):
     start_lat: float
     start_lng: float
     distance_km: float
+    aspect_ratio: float = 1.0  # >1 = taller, <1 = wider (range: 0.25-4.0)
+    fast_mode: bool = False     # Skip multi-variant optimization for faster resize
 
     @model_validator(mode='after')
     def check_shape_source(self):
         if not self.shape_id and not self.prompt:
             raise ValueError("Either shape_id or prompt must be provided")
+        # Clamp aspect_ratio to reasonable range
+        self.aspect_ratio = max(0.25, min(4.0, self.aspect_ratio))
         return self
 
 class RouteResponse(BaseModel):

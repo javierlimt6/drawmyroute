@@ -3,7 +3,7 @@
 import MapComponent from "@/components/Map";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "@/hooks/use-location";
-import { generateRoute } from "@/lib/api";
+import { generateRoute, exportGPX } from "@/lib/api";
 import {
   searchLocations,
   reverseGeocode,
@@ -29,6 +29,7 @@ import {
   EditOutlined,
   FontSizeOutlined,
   RocketOutlined,
+  DownloadOutlined,
 } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
@@ -145,7 +146,7 @@ export default function Home() {
   const [mode, setMode] = useState<InputMode>("type");
   const [prompt, setPrompt] = useState("");
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
-  const [distance, setDistance] = useState(5); // Always stored in km
+  const [distance, setDistance] = useState(10); // Always stored in km
   const [unit, setUnit] = useState<"km" | "mi">("km");
   const [targetPace, setTargetPace] = useState(6); // min/km (default 6:00)
   const [searchValue, setSearchValue] = useState("");
@@ -153,12 +154,14 @@ export default function Home() {
   const [generatedRoute, setGeneratedRoute] =
     useState<GeoJSON.LineString | null>(null);
   const [generatedSvg, setGeneratedSvg] = useState<string | null>(null);
+  const [aspectRatio, setAspectRatio] = useState(1.0); // For interactive resize
   const [routeStats, setRouteStats] = useState<{
     distance_m: number;
     duration_s: number;
   } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const {
     latitude,
     longitude,
@@ -255,9 +258,25 @@ export default function Home() {
 
   // Real API call
   const handleGenerate = async () => {
-    if (!latitude || !longitude) {
-      getCurrentLocation();
-      return;
+    let lat = latitude;
+    let lng = longitude;
+    
+    // If no location, get it first
+    if (!lat || !lng) {
+      setIsGenerating(true);
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+        setManualLocation(lat, lng);
+        setSearchValue(`Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      } catch (err) {
+        setError("Could not get location. Please enter an address.");
+        setIsGenerating(false);
+        return;
+      }
     }
 
     setIsGenerating(true);
@@ -265,9 +284,10 @@ export default function Home() {
 
     try {
       const requestPayload = {
-        start_lat: latitude,
-        start_lng: longitude,
+        start_lat: lat,
+        start_lng: lng,
         distance_km: distance,
+        aspect_ratio: aspectRatio,
         ...(mode === "type" && prompt.trim()
           ? { prompt: prompt.trim() }
           : { shape_id: selectedShape || "heart" }),
@@ -288,6 +308,49 @@ export default function Home() {
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  // Debounced resize - only triggers API after user stops dragging
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  const handleResize = (newAspectRatio: number) => {
+    setAspectRatio(newAspectRatio);
+    
+    // Clear previous timeout
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+    
+    // Debounce: wait 300ms after last drag before calling API
+    resizeTimeoutRef.current = setTimeout(async () => {
+      if (!latitude || !longitude) return;
+
+      setIsGenerating(true);
+      try {
+        const requestPayload = {
+          start_lat: latitude,
+          start_lng: longitude,
+          distance_km: distance,
+          aspect_ratio: newAspectRatio,
+          fast_mode: true,  // Use fast mode for resize
+          ...(mode === "type" && prompt.trim()
+            ? { prompt: prompt.trim() }
+            : { shape_id: selectedShape || "heart" }),
+        };
+
+        const result = await generateRoute(requestPayload);
+        setGeneratedRoute(result.route);
+        setGeneratedSvg(result.svg_path);
+        setRouteStats({
+          distance_m: result.distance_m,
+          duration_s: result.duration_s,
+        });
+      } catch (err) {
+        console.error("Resize failed:", err);
+      } finally {
+        setIsGenerating(false);
+      }
+    }, 300);
   };
 
   const distanceMarks =
@@ -361,6 +424,7 @@ export default function Home() {
                 setGeneratedSvg(null);
                 setRouteStats(null);
                 setError(null);
+                setAspectRatio(1.0);
               }}
             >
               <svg
@@ -876,7 +940,7 @@ export default function Home() {
                     viewBox="0 0 100 100"
                     width="80"
                     height="80"
-                    style={{ transform: "scaleY(-1)", overflow: "visible" }}
+                    style={{ overflow: "visible" }}
                   >
                     <path
                       d={generatedSvg}
@@ -955,6 +1019,27 @@ export default function Home() {
                 </div>
               </div>
 
+              {/* Aspect Ratio Slider */}
+              <div style={{ marginBottom: 20 }}>
+                <Text style={{ fontSize: 11, color: "#888", display: "block", marginBottom: 8 }}>
+                  Shape Stretch {isGenerating && "(updating...)"}
+                </Text>
+                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  <Text style={{ fontSize: 12, color: "#666", width: 40 }}>Wide</Text>
+                  <Slider
+                    min={0.25}
+                    max={4.0}
+                    step={0.1}
+                    value={aspectRatio}
+                    onChange={(val) => handleResize(val)}
+                    style={{ flex: 1 }}
+                    tooltip={{ formatter: (val) => `${val?.toFixed(1)}x` }}
+                    disabled={isGenerating}
+                  />
+                  <Text style={{ fontSize: 12, color: "#666", width: 40 }}>Tall</Text>
+                </div>
+              </div>
+
               {/* Action Buttons */}
               <Space
                 style={{ width: "100%" }}
@@ -965,7 +1050,8 @@ export default function Home() {
                   block
                   size="large"
                   type="primary"
-                  icon={<RocketOutlined />}
+                  icon={<DownloadOutlined />}
+                  loading={isExporting}
                   style={{
                     background: STRAVA_ORANGE,
                     borderColor: STRAVA_ORANGE,
@@ -973,15 +1059,27 @@ export default function Home() {
                     height: 48,
                     fontWeight: 600,
                   }}
-                  onClick={() => {
-                    // TODO: Open in Strava or start navigation
-                    window.open(
-                      `https://www.google.com/maps/dir/?api=1&origin=${latitude},${longitude}&destination=${latitude},${longitude}&travelmode=walking`,
-                      "_blank"
-                    );
+                  onClick={async () => {
+                    if (!latitude || !longitude) return;
+                    setIsExporting(true);
+                    try {
+                      await exportGPX({
+                        start_lat: latitude,
+                        start_lng: longitude,
+                        distance_km: distance,
+                        aspect_ratio: aspectRatio,
+                        ...(mode === "type" && prompt.trim()
+                          ? { prompt: prompt.trim() }
+                          : { shape_id: selectedShape || "heart" }),
+                      });
+                    } catch (err) {
+                      console.error("Export failed:", err);
+                    } finally {
+                      setIsExporting(false);
+                    }
                   }}
                 >
-                  Start Route
+                  {isExporting ? "Exporting..." : "Export GPX"}
                 </Button>
                 <Button
                   block
@@ -993,7 +1091,7 @@ export default function Home() {
                     setGeneratedSvg(null);
                   }}
                 >
-                  Generate New Route
+                  Create New Route
                 </Button>
               </Space>
             </div>
