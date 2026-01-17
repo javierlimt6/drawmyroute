@@ -7,33 +7,38 @@ async def snap_to_roads(
     profile: str = "walking"
 ) -> dict:
     """
-    Call Mapbox Map Matching API to snap points to roads.
+    Call Mapbox Directions API to generate a runnable route connecting the points.
     Returns GeoJSON LineString.
-    Falls back to straight lines if matching fails.
     """
     # Format coordinates as "lng,lat;lng,lat;..."
     coords = ";".join([f"{p[1]},{p[0]}" for p in gps_points])
     
-    url = f"https://api.mapbox.com/matching/v5/mapbox/{profile}/{coords}"
+    # Use Directions API instead of Matching API
+    url = f"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coords}"
+    
+    # Allow snapping to roads within 200 meters of each waypoint
+    # We need one radius per coordinate
+    radiuses = ";".join(["200"] * len(gps_points))
+    
     params = {
         "access_token": settings.MAPBOX_TOKEN,
         "geometries": "geojson",
         "overview": "full",
         "steps": "false",
-        "tidy": "true" # Clean up traces
+        "radiuses": radiuses 
     }
     
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params, timeout=10.0)
+            response = await client.get(url, params=params, timeout=15.0)
             data = response.json()
         
         if response.status_code == 200 and data.get("code") == "Ok":
-            matching = data["matchings"][0]
+            route = data["routes"][0]
             return {
-                "route": matching["geometry"],
-                "distance_m": matching["distance"],
-                "duration_s": matching["duration"]
+                "route": route["geometry"],
+                "distance_m": route["distance"],
+                "duration_s": route["duration"]
             }
             
         # Enhanced Debugging
@@ -51,6 +56,6 @@ async def snap_to_roads(
             "type": "LineString",
             "coordinates": [[p[1], p[0]] for p in gps_points]
         },
-        "distance_m": 0, # Could calculate Euclidean but 0 indicates "estimated"
+        "distance_m": 0, 
         "duration_s": 0
     }
