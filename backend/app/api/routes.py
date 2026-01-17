@@ -21,6 +21,7 @@ async def generate_route_endpoint(request: RouteRequest):
             start_lng=request.start_lng,
             distance_km=request.distance_km,
             prompt=request.prompt,
+            text=request.text,
             aspect_ratio=request.aspect_ratio,
             fast_mode=request.fast_mode
         )
@@ -39,6 +40,7 @@ async def export_gpx(request: RouteRequest):
             start_lng=request.start_lng,
             distance_km=request.distance_km,
             prompt=request.prompt,
+            text=request.text,
             aspect_ratio=request.aspect_ratio
         )
         

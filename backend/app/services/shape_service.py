@@ -6,6 +6,7 @@ from app.services.geo_scaler import scale_to_gps
 from app.services.map_matcher import snap_to_roads
 from app.services.llm_service import generate_svg_from_prompt
 from app.services.osrm_router import snap_to_roads_osrm
+from app.services.text_to_svg import text_to_svg_path_cached
 from app.config import settings
 
 SHAPES_PATH = Path(__file__).parent.parent / "data" / "shapes.json"
@@ -253,6 +254,7 @@ async def generate_route_osrm(
     start_lng: float,
     distance_km: float,
     prompt: str | None = None,
+    text: str | None = None,
     aspect_ratio: float = 1.0,
     fast_mode: bool = False
 ) -> dict:
@@ -263,8 +265,13 @@ async def generate_route_osrm(
     """
     import asyncio
     
-    # Logic Branch: Custom vs Predefined
-    if prompt:
+    # Logic Branch: Text vs Custom vs Predefined
+    if text:
+        print(f"📝 Text Input: {text}")
+        svg_path = text_to_svg_path_cached(text)
+        shape_name = f"Text: {text}"
+        current_shape_id = "text"
+    elif prompt:
         print(f"✨ Custom Prompt: {prompt}")
         svg_path = generate_svg_from_prompt(prompt, distance_km)
         shape_name = f"Custom: {prompt}"
@@ -279,18 +286,29 @@ async def generate_route_osrm(
     else:
         raise ValueError("No shape specified")
     
+    # Distance-based point scaling for optimal performance
+    def get_num_points(dist_km: float, fast: bool) -> int:
+        if fast:
+            return 30  # Minimal for resize/move
+        elif dist_km <= 10:
+            return 40  # Short routes
+        elif dist_km <= 25:
+            return 60  # Medium routes
+        else:
+            return 80  # Long routes
+    
     # Fast mode: Single variant with fewer points for resize
     if fast_mode:
-        NUM_POINTS = 40  # Fewer points for speed
+        NUM_POINTS = get_num_points(distance_km, True)
         ROTATIONS = [0]
         SCALE_FACTORS = [1.0]
-        print(f"⚡ [OSRM Fast] Generating '{current_shape_id}' ({distance_km}km)")
+        print(f"⚡ [OSRM Fast] Generating '{current_shape_id}' ({distance_km}km, {NUM_POINTS} pts)")
     else:
-        NUM_POINTS = 80  # Higher point count for smoother curves
+        NUM_POINTS = get_num_points(distance_km, False)
         ROTATIONS = [0, 90]  # Reduced from 4 to 2 for speed
         # Wider scale range: smaller values help when roads add more distance
         SCALE_FACTORS = [0.5, 0.7, 0.9, 1.0, 1.1]  # 5 values for 10 total variants
-        print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km)")
+        print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km, {NUM_POINTS} pts)")
     
     # Parse SVG once
     abstract_points = sample_svg_path(svg_path, num_points=NUM_POINTS)
@@ -460,6 +478,7 @@ async def generate_route(
     start_lng: float,
     distance_km: float,
     prompt: str | None = None,
+    text: str | None = None,
     aspect_ratio: float = 1.0,
     fast_mode: bool = False
 ) -> dict:
@@ -473,7 +492,7 @@ async def generate_route(
     print(f"📐 {mode_str} Using algorithm: {algorithm}, aspect_ratio: {aspect_ratio:.2f}")
     
     if algorithm == "osrm":
-        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio, fast_mode)
+        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, text, aspect_ratio, fast_mode)
     else:
         return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
 

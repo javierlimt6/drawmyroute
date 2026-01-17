@@ -3,6 +3,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export interface RouteRequest {
   shape_id?: string;
   prompt?: string;
+  text?: string;  // Text to convert to route shape (e.g., "NUS", "67")
   start_lat: number;
   start_lng: number;
   distance_km: number;

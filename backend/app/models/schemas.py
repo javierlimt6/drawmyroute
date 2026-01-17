@@ -4,6 +4,7 @@ from typing import Optional
 class RouteRequest(BaseModel):
     shape_id: Optional[str] = None
     prompt: Optional[str] = None
+    text: Optional[str] = None  # Text to convert to route shape (e.g., "NUS", "67")
     start_lat: float
     start_lng: float
     distance_km: float
@@ -12,8 +13,8 @@ class RouteRequest(BaseModel):
 
     @model_validator(mode='after')
     def check_shape_source(self):
-        if not self.shape_id and not self.prompt:
-            raise ValueError("Either shape_id or prompt must be provided")
+        if not self.shape_id and not self.prompt and not self.text:
+            raise ValueError("Either shape_id, prompt, or text must be provided")
         # Clamp aspect_ratio to reasonable range
         self.aspect_ratio = max(0.25, min(4.0, self.aspect_ratio))
         return self

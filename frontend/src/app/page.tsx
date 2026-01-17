@@ -39,7 +39,7 @@ const { TextArea } = Input;
 const STRAVA_ORANGE = "#FC4C02";
 const STRAVA_DARK = "#1A1A1A";
 
-type InputMode = "type" | "draw";
+type InputMode = "type" | "draw" | "text";
 
 interface PredefinedShape {
   id: string;
@@ -145,6 +145,7 @@ export default function Home() {
   const [showModal, setShowModal] = useState(true);
   const [mode, setMode] = useState<InputMode>("type");
   const [prompt, setPrompt] = useState("");
+  const [textInput, setTextInput] = useState("");  // Text mode input (e.g., "NUS", "67")
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [distance, setDistance] = useState(10); // Always stored in km
   const [unit, setUnit] = useState<"km" | "mi">("km");
@@ -292,6 +293,8 @@ export default function Home() {
         aspect_ratio: aspectRatio,
         ...(mode === "type" && prompt.trim()
           ? { prompt: prompt.trim() }
+          : mode === "text" && textInput.trim()
+          ? { text: textInput.trim() }
           : { shape_id: selectedShape || "heart" }),
       };
 
@@ -350,6 +353,8 @@ export default function Home() {
           fast_mode: true,  // Use fast mode for resize
           ...(mode === "type" && prompt.trim()
             ? { prompt: prompt.trim() }
+            : mode === "text" && textInput.trim()
+            ? { text: textInput.trim() }
             : { shape_id: selectedShape || "heart" }),
         };
 
@@ -405,6 +410,8 @@ export default function Home() {
           fast_mode: true,
           ...(mode === "type" && prompt.trim()
             ? { prompt: prompt.trim() }
+            : mode === "text" && textInput.trim()
+            ? { text: textInput.trim() }
             : { shape_id: selectedShape || "heart" }),
         };
 
@@ -471,8 +478,9 @@ export default function Home() {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 10,
+                gap: 8,
                 cursor: "pointer",
+                flexShrink: 0,
               }}
               onClick={() => {
                 setShowModal(true);
@@ -493,14 +501,22 @@ export default function Home() {
               </svg>
               <Text
                 strong
-                style={{ color: "#fff", fontSize: 18, letterSpacing: 1 }}
+                style={{ 
+                  color: "#fff", 
+                  fontSize: 16, 
+                  letterSpacing: 0.5,
+                  whiteSpace: "nowrap",
+                }}
               >
                 DrawMyRoute
               </Text>
             </div>
 
-            {/* Center - Hack&Roll badge */}
-            <Text style={{ color: "#888", fontSize: 11 }}>
+            {/* Center - Hack&Roll badge (hidden on small screens) */}
+            <Text 
+              style={{ color: "#888", fontSize: 11 }}
+              className="hidden sm:block"
+            >
               A Hack&Roll 2026 project by{" "}
               <span style={{ color: STRAVA_ORANGE }}>duo showdown</span>
             </Text>
@@ -743,6 +759,15 @@ export default function Home() {
                     ),
                     value: "draw",
                   },
+                  {
+                    label: (
+                      <Space>
+                        <FontSizeOutlined />
+                        Write Text
+                      </Space>
+                    ),
+                    value: "text",
+                  },
                 ]}
                 style={{ marginBottom: 16 }}
               />
@@ -760,6 +785,15 @@ export default function Home() {
                   showCount
                   maxLength={200}
                   style={{ marginBottom: 12 }}
+                />
+              ) : mode === "text" ? (
+                <Input
+                  size="large"
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value.toUpperCase())}
+                  placeholder="e.g., NUS, 67, HI..."
+                  maxLength={10}
+                  style={{ marginBottom: 12, fontSize: 24, fontWeight: 700, textAlign: "center" }}
                 />
               ) : (
                 <div
@@ -938,6 +972,34 @@ export default function Home() {
                   : "Get Location & Generate"}
               </Button>
             </Card>
+          </div>
+        )}
+
+        {/* Floating Error Alert for Route View (outside modal) */}
+        {error && !showModal && generatedRoute && (
+          <div
+            style={{
+              position: "absolute",
+              top: 60,
+              left: 16,
+              right: 16,
+              zIndex: 25,
+              maxWidth: 400,
+              margin: "0 auto",
+            }}
+          >
+            <Alert
+              message="Operation Failed"
+              description={error}
+              type="error"
+              showIcon
+              closable
+              onClose={() => setError(null)}
+              style={{
+                boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                borderRadius: 8,
+              }}
+            />
           </div>
         )}
 
