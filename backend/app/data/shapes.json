@@ -13,5 +13,30 @@
     "name": "Dinosaur",
     "svg_path": "M 10 70 L 20 50 L 30 55 L 40 40 L 50 45 L 60 30 L 70 35 L 80 50 L 90 70 L 70 70 L 60 80 L 40 80 L 30 70 Z",
     "thumbnail": "/assets/dino.png"
+  },
+  "circle": {
+    "name": "Circle",
+    "svg_path": "M 50 0 A 50 50 0 1 1 50 100 A 50 50 0 1 1 50 0 Z",
+    "thumbnail": "/assets/circle.png"
+  },
+  "figure8": {
+    "name": "Figure 8",
+    "svg_path": "M 50 25 C 75 0, 100 25, 75 50 C 100 75, 75 100, 50 75 C 25 100, 0 75, 25 50 C 0 25, 25 0, 50 25 Z",
+    "thumbnail": "/assets/figure8.png"
+  },
+  "lightning": {
+    "name": "Lightning",
+    "svg_path": "M 40 0 L 60 0 L 55 35 L 80 35 L 30 100 L 40 55 L 20 55 Z",
+    "thumbnail": "/assets/lightning.png"
+  },
+  "singapore": {
+    "name": "Singapore",
+    "svg_path": "M 10 50 L 30 30 L 50 35 L 70 25 L 90 40 L 85 60 L 60 70 L 40 65 L 20 70 Z",
+    "thumbnail": "/assets/singapore.png"
+  },
+  "merlion": {
+    "name": "Merlion",
+    "svg_path": "M 50 10 L 60 30 L 80 35 L 70 50 L 75 70 L 50 90 L 25 70 L 30 50 L 20 35 L 40 30 Z",
+    "thumbnail": "/assets/merlion.png"
   }
 }

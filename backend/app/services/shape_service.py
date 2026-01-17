@@ -16,7 +16,7 @@ async def generate_route_from_shape(
     start_lng: float,
     distance_km: float
 ) -> dict:
-    """V1: Generate route from predefined shape."""
+    """V1: Generate route from predefined shape with Adaptive Retry."""
     shapes = load_shapes()
     
     if shape_id not in shapes:
@@ -24,21 +24,50 @@ async def generate_route_from_shape(
     
     svg_path = shapes[shape_id]["svg_path"]
     
-    # 1. Parse SVG to abstract points
-    # Use fewer points (8) for Directions API to avoid "jagged" routes 
-    # but enough to maintain shape info. Fewer points = easier to route.
-    abstract_points = sample_svg_path(svg_path, num_points=8)
+    # Adaptive Strategy: Try best quality first, then relax constraints
+    strategies = [
+        {"points": 12, "radius": 100, "profile": "walking"},  # Ideal
+        {"points": 8, "radius": 200, "profile": "walking"},   # Standard
+        {"points": 6, "radius": 500, "profile": "walking"},   # Relaxed
+        {"points": 5, "radius": 1000, "profile": "walking"},  # Very Relaxed
+        {"points": 5, "radius": 1000, "profile": "cycling"},  # Fallback Profile
+    ]
     
-    # 2. Scale abstract points to real-world GPS
-    gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km)
+    last_error = None
     
-    # 3. Snap to roads
-    result = await snap_to_roads(gps_points)
-    
-    return {
-        "shape_id": shape_id,
-        "shape_name": shapes[shape_id]["name"],
-        "original_points": abstract_points,
-        "gps_points": gps_points,
-        **result
-    }
+    for strategy in strategies:
+        try:
+            # 1. Parse SVG
+            abstract_points = sample_svg_path(svg_path, num_points=strategy["points"])
+            
+            # 2. Scale to GPS
+            gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km)
+            
+            # 3. Snap to roads (with specific strategy parameters)
+            result = await snap_to_roads(
+                gps_points, 
+                profile=strategy["profile"], 
+                radius=strategy["radius"]
+            )
+            
+            # If successful, return immediately
+            print(f"✅ Success with strategy: {strategy}")
+            return {
+                "shape_id": shape_id,
+                "shape_name": shapes[shape_id]["name"],
+                "original_points": abstract_points,
+                "gps_points": gps_points,
+                **result
+            }
+            
+        except ValueError as e:
+            print(f"⚠️ Strategy failed: {strategy} - Error: {e}")
+            last_error = e
+            continue
+        except Exception as e:
+            print(f"❌ Unexpected error with strategy {strategy}: {e}")
+            last_error = e
+            continue
+            
+    # If all strategies fail
+    raise ValueError(f"Could not generate a runnable route here. Last error: {last_error}")
