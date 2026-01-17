@@ -155,6 +155,7 @@ export default function Home() {
     useState<GeoJSON.LineString | null>(null);
   const [generatedSvg, setGeneratedSvg] = useState<string | null>(null);
   const [inputPrompt, setInputPrompt] = useState<string | null>(null);
+  const [rotationDeg, setRotationDeg] = useState<number>(0);
   const [aspectRatio, setAspectRatio] = useState(1.0); // For interactive resize
   const [routeCenter, setRouteCenter] = useState<{
     lat: number;
@@ -309,6 +310,8 @@ export default function Home() {
       setGeneratedRoute(result.route);
       setGeneratedSvg(result.svg_path);
       setInputPrompt(result.input_prompt || null);
+      setRotationDeg(result.rotation_deg ?? 0);
+      console.log("Backend rotation_deg:", result.rotation_deg);
       setRouteStats({
         distance_m: result.distance_m,
       });
@@ -373,6 +376,8 @@ export default function Home() {
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
         setInputPrompt(result.input_prompt || null);
+        setRotationDeg(result.rotation_deg ?? 0);
+        console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
           distance_m: result.distance_m,
         });
@@ -436,6 +441,8 @@ export default function Home() {
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
         setInputPrompt(result.input_prompt || null);
+        setRotationDeg(result.rotation_deg ?? 0);
+        console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
           distance_m: result.distance_m,
         });
@@ -571,6 +578,7 @@ export default function Home() {
             isResizing={isGenerating}
             svgPath={generatedSvg}
             showOverlay={showOverlay}
+            rotationDeg={rotationDeg}
           />
           {showModal && (
             <div

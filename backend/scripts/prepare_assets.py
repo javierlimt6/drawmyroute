@@ -5,6 +5,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from pathlib import Path
 import sys
+from svg.path import parse_path, Move, Line, CubicBezier, QuadraticBezier, Arc
 
 # Setup Paths
 SCRIPT_DIR = Path(__file__).parent
@@ -16,6 +17,59 @@ sys.path.append(str(ROOT_DIR))
 from app.utils.embeddings import build_vector_index
 LUCIDE_DIR = SCRIPT_DIR / "lucide"
 ICONS_DIR = LUCIDE_DIR / "icons"
+
+def get_points_from_path(path):
+    points = []
+    for segment in path:
+        if isinstance(segment, (Line, Move)):
+            points.append((segment.start.real, segment.start.imag))
+            points.append((segment.end.real, segment.end.imag))
+        elif isinstance(segment, (CubicBezier, QuadraticBezier, Arc)):
+            for t in [i/10 for i in range(11)]:
+                pt = segment.point(t)
+                points.append((pt.real, pt.imag))
+    return points
+
+def normalize_points(points):
+    xs = [x for x, y in points]
+    ys = [y for x, y in points]
+    if not xs or not ys: return points
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    def norm(x, min_, max_): return ((x - min_) / (max_ - min_)) * 100 if max_ > min_ else 50
+    return [(norm(x, min_x, max_x), norm(y, min_y, max_y)) for x, y in points]
+
+def normalize_svg_path(svg_d):
+    try:
+        path = parse_path(svg_d)
+        points = get_points_from_path(path)
+        if not points: return None
+        # --- NEW CHECKS ---
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        
+        width = max(xs) - min(xs)
+        height = max(ys) - min(ys)
+        
+        # Check 1: Bounding Box Size
+        # If the original dimensions are near zero, it's a dot/artifact
+        if width < 0.1 or height < 0.1:
+            return None
+            
+        # Check 2: Complexity
+        # If the path has fewer than 4 distinct points, it's likely just a dot or a single line
+        if len(set(points)) < 4:
+            return None
+        # ------------------
+        
+        norm_points = normalize_points(points)
+        d = f"M {norm_points[0][0]:.2f} {norm_points[0][1]:.2f} " + " ".join(
+            f"L {x:.2f} {y:.2f}" for x, y in norm_points[1:]
+        ) + " Z"
+        return d
+    except Exception as e:
+        print(f"Error normalizing: {e}")
+        return svg_d
 
 def run_extraction():
     # 1. Clone Lucide if not exists
@@ -60,11 +114,12 @@ def run_extraction():
 
                 full_d = " ".join(paths)
                 
-                # Ensure path is closed (contains 'z') and has enough complexity for a route
-                if 'z' not in full_d.lower() or len(full_d) < 30:
+                # Normalize and Validate
+                normalized_d = normalize_svg_path(full_d)
+                if normalized_d is None:
+                    # print(f"⚠️ Skipping {name}: Path is too small or simple.")
                     continue
-                
-                data_store[name] = full_d
+                data_store[name] = normalized_d
                 
                 # 2. Extract Characteristics (Tags)
                 json_path = ICONS_DIR / f"{name}.json"

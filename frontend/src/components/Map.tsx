@@ -16,9 +16,19 @@ interface MapComponentProps {
   isResizing?: boolean;
   svgPath?: string | null;
   showOverlay?: boolean;
+  rotationDeg?: number; // NEW: overlay rotation in degrees
 }
 
-export default function MapComponent({ route, center, onResize, onMove, isResizing = false, svgPath, showOverlay = true }: MapComponentProps) {
+export default function MapComponent({
+  route,
+  center,
+  onResize,
+  onMove,
+  isResizing = false,
+  svgPath,
+  showOverlay = true,
+  rotationDeg = 0,
+}: MapComponentProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const marker = useRef<mapboxgl.Marker | null>(null);
@@ -50,7 +60,7 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), "top-right");
-      
+
       map.current.on("load", () => setMapLoaded(true));
     } catch (e) {
       console.error("Error initializing map:", e);
@@ -90,7 +100,7 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
           cursor: pointer;
         "></div>
       `;
-      
+
       marker.current = new mapboxgl.Marker({ element: el, anchor: "center" })
         .setLngLat(center)
         .setPopup(new mapboxgl.Popup({ offset: 25 }).setText("Start Location"))
@@ -123,8 +133,8 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
       // Calculate route bounds for resize overlay
       const coordinates = route.coordinates as [number, number][];
       if (coordinates.length > 0) {
-        const lngs = coordinates.map(c => c[0]);
-        const lats = coordinates.map(c => c[1]);
+        const lngs = coordinates.map((c) => c[0]);
+        const lats = coordinates.map((c) => c[1]);
         setRouteBounds({
           minLng: Math.min(...lngs),
           maxLng: Math.max(...lngs),
@@ -208,21 +218,31 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
   }, [route]);
 
   // Handle resize from overlay
-  const handleOverlayResize = useCallback((aspectRatioMultiplier: number) => {
-    if (onResize) {
-      onResize(aspectRatioMultiplier);
-    }
-  }, [onResize]);
+  const handleOverlayResize = useCallback(
+    (aspectRatioMultiplier: number) => {
+      if (onResize) {
+        onResize(aspectRatioMultiplier);
+      }
+    },
+    [onResize]
+  );
 
   // Handle move from overlay
-  const handleOverlayMove = useCallback((newLat: number, newLng: number) => {
-    if (onMove) {
-      onMove(newLat, newLng);
-    }
-  }, [onMove]);
+  const handleOverlayMove = useCallback(
+    (newLat: number, newLng: number) => {
+      if (onMove) {
+        onMove(newLat, newLng);
+      }
+    },
+    [onMove]
+  );
 
   return (
-    <div ref={mapContainer} className="w-full h-full" style={{ position: "relative" }}>
+    <div
+      ref={mapContainer}
+      className="w-full h-full"
+      style={{ position: "relative" }}
+    >
       {mapLoaded && route && onResize && showOverlay && (
         <RouteResizeOverlay
           bounds={routeBounds}
@@ -231,6 +251,7 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
           onMove={onMove ? handleOverlayMove : undefined}
           disabled={isResizing}
           svgPath={svgPath}
+          rotationDeg={rotationDeg}
         />
       )}
     </div>

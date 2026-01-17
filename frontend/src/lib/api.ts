@@ -19,6 +19,7 @@ export interface RouteResponse {
   distance_m: number;
   original_points?: number[][];
   gps_points?: number[][];
+  rotation_deg?: number; // Added for overlay rotation
 }
 
 export async function generateRoute(request: RouteRequest): Promise<RouteResponse> {

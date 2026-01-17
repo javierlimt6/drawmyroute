@@ -27,3 +27,4 @@ class RouteResponse(BaseModel):
     gps_points: list[tuple[float, float]]
     route: dict  # GeoJSON LineString
     distance_m: float
+    rotation_deg: float = 0
