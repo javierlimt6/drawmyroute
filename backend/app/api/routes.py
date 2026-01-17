@@ -11,13 +11,14 @@ async def list_shapes():
 
 @router.post("/generate", response_model=RouteResponse)
 async def generate_route(request: RouteRequest):
-    """Generate a route from a predefined shape."""
+    """Generate a route from a predefined shape or prompt."""
     try:
         return await generate_route_from_shape(
             shape_id=request.shape_id,
             start_lat=request.start_lat,
             start_lng=request.start_lng,
-            distance_km=request.distance_km
+            distance_km=request.distance_km,
+            prompt=request.prompt
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

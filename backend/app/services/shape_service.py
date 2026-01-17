@@ -4,6 +4,7 @@ from pathlib import Path
 from app.services.svg_parser import sample_svg_path
 from app.services.geo_scaler import scale_to_gps
 from app.services.map_matcher import snap_to_roads
+from app.services.llm_service import generate_svg_from_prompt
 
 SHAPES_PATH = Path(__file__).parent.parent / "data" / "shapes.json"
 
@@ -48,18 +49,29 @@ def calculate_score(result: dict, target_distance_km: float, strategy_fidelity: 
     return final_score
 
 async def generate_route_from_shape(
-    shape_id: str,
+    shape_id: str | None,
     start_lat: float,
     start_lng: float,
-    distance_km: float
+    distance_km: float,
+    prompt: str | None = None
 ) -> dict:
-    """V1: Generate route from predefined shape with Metric-Driven Selection."""
-    shapes = load_shapes()
+    """V1: Generate route from predefined shape OR custom prompt."""
     
-    if shape_id not in shapes:
-        raise ValueError(f"Unknown shape: {shape_id}")
-    
-    svg_path = shapes[shape_id]["svg_path"]
+    # Logic Branch: Custom vs Predefined
+    if prompt:
+        print(f"✨ Custom Prompt: {prompt}")
+        svg_path = generate_svg_from_prompt(prompt, distance_km)
+        shape_name = f"Custom: {prompt}"
+        current_shape_id = "custom"
+    elif shape_id:
+        shapes = load_shapes()
+        if shape_id not in shapes:
+            raise ValueError(f"Unknown shape: {shape_id}")
+        svg_path = shapes[shape_id]["svg_path"]
+        shape_name = shapes[shape_id]["name"]
+        current_shape_id = shape_id
+    else:
+        raise ValueError("No shape specified")
     
     # Strategies: 10 variations from Perfect to Desperate
     # Fidelity: 1.0 (Best) -> 0.5 (Worst)
@@ -90,7 +102,7 @@ async def generate_route_from_shape(
     successful_results = []
     last_error = None
     
-    print(f"🔄 Generating '{shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
+    print(f"🔄 Generating '{current_shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
     
     for strategy in strategies:
         try:
@@ -109,8 +121,9 @@ async def generate_route_from_shape(
             score = calculate_score(result, distance_km, strategy["fidelity"])
             
             result_data = {
-                "shape_id": shape_id,
-                "shape_name": shapes[shape_id]["name"],
+                "shape_id": current_shape_id,
+                "shape_name": shape_name,
+                "svg_path": svg_path,
                 "original_points": abstract_points,
                 "gps_points": gps_points,
                 "score": score,
