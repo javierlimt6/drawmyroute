@@ -37,8 +37,7 @@ async def _call_mapbox_directions(
         route = data["routes"][0]
         return {
             "route": route["geometry"],
-            "distance_m": route["distance"],
-            "duration_s": route["duration"]
+            "distance_m": route["distance"]
         }
     
     error_code = data.get("code", "Unknown")
@@ -77,7 +76,6 @@ async def snap_to_roads(
     # Call Mapbox for each chunk
     all_coords = []
     total_distance = 0.0
-    total_duration = 0.0
     
     for idx, chunk in enumerate(chunks):
         try:
@@ -90,7 +88,6 @@ async def snap_to_roads(
             
             all_coords.extend(chunk_coords)
             total_distance += result["distance_m"]
-            total_duration += result["duration_s"]
             
         except Exception as e:
             print(f"   ⚠️ Chunk {idx+1} failed: {e}")
@@ -98,7 +95,5 @@ async def snap_to_roads(
     
     return {
         "route": {"type": "LineString", "coordinates": all_coords},
-        "distance_m": total_distance,
-        "duration_s": total_duration
+        "distance_m": total_distance
     }
-

@@ -13,10 +13,10 @@ export interface RouteRequest {
 export interface RouteResponse {
   shape_id: string;
   shape_name: string;
+  input_prompt?: string;
   svg_path: string;
   route: GeoJSON.LineString;
   distance_m: number;
-  duration_s: number;
   original_points?: number[][];
   gps_points?: number[][];
 }
@@ -70,4 +70,3 @@ export async function exportGPX(request: RouteRequest): Promise<void> {
   document.body.removeChild(a);
   window.URL.revokeObjectURL(url);
 }
-

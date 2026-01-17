@@ -152,6 +152,7 @@ async def generate_route_from_shape(
                 result_data = {
                     "shape_id": shape_id,
                     "shape_name": shapes[shape_id]["name"],
+                    "input_prompt": prompt,
                     "original_points": abstract_points,
                     "gps_points": gps_points,
                     "score": score,
@@ -408,6 +409,7 @@ async def generate_route_osrm(
     result_data = {
         "shape_id": current_shape_id,
         "shape_name": shape_name,
+        "input_prompt": prompt,
         "svg_path": svg_path,
         "original_points": abstract_points,
         "gps_points": best["gps_points"],
@@ -476,5 +478,3 @@ async def generate_route(
         return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio, fast_mode)
     else:
         return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
-
-
