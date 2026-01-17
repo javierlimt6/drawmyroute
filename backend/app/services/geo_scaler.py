@@ -68,7 +68,7 @@ def scale_to_gps(
         scale_x_km = target_diagonal_km * aspect_ratio
 
     for nx, ny in normalized:
-        lat_offset = ny * scale_y_km * deg_per_km_lat
+        lat_offset = -ny * scale_y_km * deg_per_km_lat
         lng_offset = nx * scale_x_km * deg_per_km_lng
         gps_points.append((start_lat + lat_offset, start_lng + lng_offset))
     

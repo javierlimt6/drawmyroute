@@ -876,7 +876,7 @@ export default function Home() {
                     viewBox="0 0 100 100"
                     width="80"
                     height="80"
-                    style={{ transform: "scaleY(-1)", overflow: "visible" }}
+                    style={{ transform: "scaleY(1)", overflow: "visible" }}
                   >
                     <path
                       d={generatedSvg}
