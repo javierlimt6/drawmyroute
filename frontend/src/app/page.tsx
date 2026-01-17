@@ -3,6 +3,7 @@
 import MapComponent from "@/components/Map";
 import { useState } from "react";
 import { useLocation } from "@/hooks/use-location";
+import { generateRoute } from "@/lib/api";
 import {
   Card,
   Typography,
@@ -12,6 +13,7 @@ import {
   ConfigProvider,
   Segmented,
   Slider,
+  Alert,
 } from "antd";
 import {
   EnvironmentOutlined,
@@ -60,6 +62,8 @@ export default function Home() {
   const [searchValue, setSearchValue] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRoute, setGeneratedRoute] = useState<GeoJSON.LineString | null>(null);
+  const [routeStats, setRouteStats] = useState<{ distance_m: number; duration_s: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const { latitude, longitude, loading: locationLoading, getCurrentLocation } = useLocation();
 
   // Conversion helpers
@@ -71,7 +75,7 @@ export default function Home() {
     setDistance(unit === "km" ? val : val * MI_TO_KM);
   };
 
-  // Mock route generation (replace with real API later)
+  // Real API call
   const handleGenerate = async () => {
     if (!latitude || !longitude) {
       getCurrentLocation();
@@ -79,33 +83,26 @@ export default function Home() {
     }
     
     setIsGenerating(true);
+    setError(null);
     
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Mock heart-shaped route centered on user location
-    const mockRoute: GeoJSON.LineString = {
-      type: "LineString",
-      coordinates: [
-        [longitude, latitude],
-        [longitude + 0.008, latitude + 0.012],
-        [longitude + 0.016, latitude + 0.008],
-        [longitude + 0.012, latitude],
-        [longitude + 0.016, latitude - 0.008],
-        [longitude + 0.008, latitude - 0.012],
-        [longitude, latitude],
-        [longitude - 0.008, latitude - 0.012],
-        [longitude - 0.016, latitude - 0.008],
-        [longitude - 0.012, latitude],
-        [longitude - 0.016, latitude + 0.008],
-        [longitude - 0.008, latitude + 0.012],
-        [longitude, latitude],
-      ]
-    };
-    
-    setGeneratedRoute(mockRoute);
-    setIsGenerating(false);
-    setShowModal(false);
+    try {
+      const shapeId = selectedShape || "heart"; // Default to heart if no shape selected
+      const result = await generateRoute({
+        shape_id: shapeId,
+        start_lat: latitude,
+        start_lng: longitude,
+        distance_km: distance,
+      });
+      
+      setGeneratedRoute(result.route);
+      setRouteStats({ distance_m: result.distance_m, duration_s: result.duration_s });
+      setShowModal(false);
+    } catch (err) {
+      console.error("Generation failed:", err);
+      setError(err instanceof Error ? err.message : "Failed to generate route");
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const distanceMarks = unit === "km" 
@@ -429,6 +426,19 @@ export default function Home() {
                 )}
               </div>
 
+              {/* Error Alert */}
+              {error && (
+                <Alert
+                  message="Generation Failed"
+                  description={error}
+                  type="error"
+                  showIcon
+                  closable
+                  onClose={() => setError(null)}
+                  style={{ marginBottom: 16 }}
+                />
+              )}
+
               {/* CTA Button */}
               <Button
                 block
@@ -487,19 +497,23 @@ export default function Home() {
                 <div>
                   <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Distance</Text>
                   <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    {unit === "km" ? `${distance.toFixed(1)} km` : `${(distance * KM_TO_MI).toFixed(1)} mi`}
+                    {routeStats ? 
+                      (unit === "km" ? `${(routeStats.distance_m / 1000).toFixed(1)} km` : `${(routeStats.distance_m / 1000 * KM_TO_MI).toFixed(1)} mi`)
+                      : "--"}
                   </Text>
                 </div>
                 <div>
                   <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Est. Time</Text>
                   <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    {Math.round(distance * 6)} min
+                    {routeStats ? `${Math.round(routeStats.duration_s / 60)} min` : "--"}
                   </Text>
                 </div>
                 <div>
                   <Text style={{ fontSize: 11, color: "#888", display: "block" }}>Pace</Text>
                   <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    6:00 /km
+                    {routeStats && routeStats.distance_m > 0 
+                      ? `${Math.floor(routeStats.duration_s / 60 / (routeStats.distance_m / 1000))}:${String(Math.round((routeStats.duration_s / 60 / (routeStats.distance_m / 1000) % 1) * 60)).padStart(2, '0')} /km`
+                      : "--"}
                   </Text>
                 </div>
               </div>
