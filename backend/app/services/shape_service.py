@@ -25,7 +25,9 @@ async def generate_route_from_shape(
     svg_path = shapes[shape_id]["svg_path"]
     
     # 1. Parse SVG to abstract points
-    abstract_points = sample_svg_path(svg_path, num_points=25)
+    # Use fewer points (8) for Directions API to avoid "jagged" routes 
+    # but enough to maintain shape info. Fewer points = easier to route.
+    abstract_points = sample_svg_path(svg_path, num_points=8)
     
     # 2. Scale abstract points to real-world GPS
     gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km)

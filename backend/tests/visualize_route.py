@@ -1,21 +1,31 @@
 import httpx
 import json
 import sys
+import random
 
 # Constants
 API_URL = "http://localhost:8000/api/v1/generate"
 OUTPUT_FILE = "output.geojson"
 
 def main():
-    print("🚀 Generating route...")
+    # Get shape from command line arg, default to heart
+    shape_id = sys.argv[1] if len(sys.argv) > 1 else "heart"
     
-    # Singapore Coordinates (around Marina Bay)
+    print(f"🚀 Generating route for shape: {shape_id}...")
+    
+    # Singapore CBD / Marina Bay
+    # Add tiny random jitter to ensure unique request
+    lat_jit = random.uniform(-0.001, 0.001)
+    lng_jit = random.uniform(-0.001, 0.001)
+    
     payload = {
-        "shape_id": "heart",
-        "start_lat": 1.3521,
-        "start_lng": 103.8198,
-        "distance_km": 5.0
+        "shape_id": shape_id,
+        "start_lat": 1.290270 + lat_jit,
+        "start_lng": 103.851959 + lng_jit,
+        "distance_km": 3.0
     }
+    
+    print(f"📍 Start Location: {payload['start_lat']:.6f}, {payload['start_lng']:.6f}")
     
     try:
         response = httpx.post(API_URL, json=payload, timeout=30.0)
@@ -35,7 +45,7 @@ def main():
         print(f"📍 Saved to: {OUTPUT_FILE}")
         print(f"📏 Distance: {data['distance_m']} meters")
         print(f"⏱️ Duration: {data['duration_s']} seconds")
-        print(f"\n💡 Tip: Drag {OUTPUT_FILE} into https://geojson.io to visualize it.")
+        print(f"ℹ️  Shape: {data.get('shape_name', 'Unknown')}")
         
     except Exception as e:
         print(f"❌ Connection Failed: {e}")
