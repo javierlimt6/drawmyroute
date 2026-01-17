@@ -1,0 +1,17 @@
+{
+  "heart": {
+    "name": "Heart",
+    "svg_path": "M 50 25 C 50 0, 0 0, 0 50 C 0 80, 50 100, 50 100 C 50 100, 100 80, 100 50 C 100 0, 50 0, 50 25 Z",
+    "thumbnail": "/assets/heart.png"
+  },
+  "star": {
+    "name": "Star",
+    "svg_path": "M 50 0 L 61 35 L 98 35 L 68 57 L 79 91 L 50 70 L 21 91 L 32 57 L 2 35 L 39 35 Z",
+    "thumbnail": "/assets/star.png"
+  },
+  "dinosaur": {
+    "name": "Dinosaur",
+    "svg_path": "M 10 70 L 20 50 L 30 55 L 40 40 L 50 45 L 60 30 L 70 35 L 80 50 L 90 70 L 70 70 L 60 80 L 40 80 L 30 70 Z",
+    "thumbnail": "/assets/dino.png"
+  }
+}
