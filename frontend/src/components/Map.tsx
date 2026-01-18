@@ -11,7 +11,7 @@ const STRAVA_ORANGE = "#FC4C02";
 interface MapComponentProps {
   route?: GeoJSON.LineString | null;
   center?: [number, number]; // [lng, lat]
-  onResize?: (aspectRatio: number) => void;
+  onResize?: (ratio: number, dimension: "width" | "height") => void;
   onMove?: (newLat: number, newLng: number) => void;
   isResizing?: boolean;
   svgPath?: string | null;
@@ -208,9 +208,9 @@ export default function MapComponent({ route, center, onResize, onMove, isResizi
   }, [route]);
 
   // Handle resize from overlay
-  const handleOverlayResize = useCallback((aspectRatioMultiplier: number) => {
+  const handleOverlayResize = useCallback((ratio: number, dimension: "width" | "height") => {
     if (onResize) {
-      onResize(aspectRatioMultiplier);
+      onResize(ratio, dimension);
     }
   }, [onResize]);
 

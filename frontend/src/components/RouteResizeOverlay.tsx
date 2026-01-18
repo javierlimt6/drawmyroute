@@ -13,7 +13,7 @@ interface RouteResizeOverlayProps {
     maxLat: number;
   } | null;
   mapRef: mapboxgl.Map | null;
-  onResize: (aspectRatio: number) => void;
+  onResize: (ratio: number, dimension: "width" | "height") => void;
   onMove?: (newLat: number, newLng: number) => void;
   disabled?: boolean;
   svgPath?: string | null;
@@ -153,11 +153,18 @@ export default function RouteResizeOverlay({
           const newCenter = mapRef.unproject([centerX, centerY]);
           onMove(newCenter.lat, newCenter.lng);
         } else {
-          // Calculate aspect ratio change for resize
-          const originalAspect = initialBounds.height / initialBounds.width;
-          const newAspect = screenBounds.height / screenBounds.width;
-          const aspectRatioChange = newAspect / originalAspect;
-          onResize(aspectRatioChange);
+          // Differentiate between width and height drags
+          if (dragEdge === "left" || dragEdge === "right") {
+            // Width drag: send width ratio for adaptive resize
+            const widthRatio = screenBounds.width / initialBounds.width;
+            onResize(widthRatio, "width");
+          } else {
+            // Height drag: send aspect ratio change
+            const originalAspect = initialBounds.height / initialBounds.width;
+            const newAspect = screenBounds.height / screenBounds.width;
+            const aspectRatioChange = newAspect / originalAspect;
+            onResize(aspectRatioChange, "height");
+          }
         }
       }
       
@@ -233,31 +240,21 @@ export default function RouteResizeOverlay({
         </svg>
       )}
 
-      {/* Center move handle */}
+      {/* Interior draggable area for moving (excludes edge handle zones) */}
       {onMove && (
         <div
           onMouseDown={(e) => handleMouseDown(e, "center")}
           style={{
             position: "absolute",
-            left: screenBounds.width / 2 - 18,
-            top: screenBounds.height / 2 - 18,
-            width: 36,
-            height: 36,
-            background: "#fff",
-            border: `2px solid ${MOVE_DARK}`,
-            borderRadius: "50%",
+            left: 20,
+            top: 20,
+            width: Math.max(0, screenBounds.width - 40),
+            height: Math.max(0, screenBounds.height - 40),
+            background: "transparent",
             cursor: disabled ? "not-allowed" : "move",
             pointerEvents: "auto",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
           }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill={MOVE_DARK}>
-            <path d="M8 0L6 3h4L8 0zM8 16l2-3H6l2 3zM0 8l3 2V6L0 8zM16 8l-3-2v4l3-2zM7 7h2v2H7V7z" />
-          </svg>
-        </div>
+        />
       )}
 
       {/* Top edge handle */}
