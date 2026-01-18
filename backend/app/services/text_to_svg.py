@@ -120,15 +120,18 @@ def normalize_path(path_data: str) -> str:
     
     width = max_x - min_x or 1
     height = max_y - min_y or 1
-    scale = min(90 / width, 90 / height)
+    
+    # Stretch to fill vertical space (separate X/Y scales)
+    scale_y = 90 / height  # Fill 90% of vertical
+    scale_x = 90 / width   # Fill 90% of horizontal too, keeping proportions natural
     
     target_size = 100
-    offset_x = (target_size - width * scale) / 2 - min_x * scale
-    offset_y = (target_size - height * scale) / 2 - min_y * scale
+    offset_x = (target_size - width * scale_x) / 2 - min_x * scale_x
+    offset_y = (target_size - height * scale_y) / 2 - min_y * scale_y
     
     def transform(m):
-        x = float(m.group(1)) * scale + offset_x
-        y = float(m.group(2)) * scale + offset_y
+        x = float(m.group(1)) * scale_x + offset_x
+        y = float(m.group(2)) * scale_y + offset_y
         return f"{x:.2f},{y:.2f}"
     
     return re.sub(r'(-?\d+\.?\d*)[\s,]+(-?\d+\.?\d*)', transform, path_data)

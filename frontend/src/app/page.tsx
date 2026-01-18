@@ -3,7 +3,7 @@
 import MapComponent from "@/components/Map";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "@/hooks/use-location";
-import { generateRoute, exportGPX } from "@/lib/api";
+import { generateRoute, exportGPX, parseImage, suggestRoute } from "@/lib/api";
 import {
   searchLocations,
   reverseGeocode,
@@ -30,6 +30,8 @@ import {
   FontSizeOutlined,
   RocketOutlined,
   DownloadOutlined,
+  UploadOutlined,
+  PictureOutlined,
 } from "@ant-design/icons";
 
 const { Title, Text } = Typography;
@@ -39,7 +41,7 @@ const { TextArea } = Input;
 const STRAVA_ORANGE = "#FC4C02";
 const STRAVA_DARK = "#1A1A1A";
 
-type InputMode = "type" | "draw" | "text";
+type InputMode = "type" | "draw" | "text" | "image";
 
 interface PredefinedShape {
   id: string;
@@ -165,6 +167,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);  // Toggle for resize overlay
+  const [imageSvgPath, setImageSvgPath] = useState<string | null>(null);  // SVG path from uploaded image
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);  // Auto-suggest loading state
   const {
     latitude,
     longitude,
@@ -291,7 +296,9 @@ export default function Home() {
         start_lng: lng,
         distance_km: distance,
         aspect_ratio: aspectRatio,
-        ...(mode === "type" && prompt.trim()
+        ...(mode === "image" && imageSvgPath
+          ? { image_svg_path: imageSvgPath }
+          : mode === "type" && prompt.trim()
           ? { prompt: prompt.trim() }
           : mode === "text" && textInput.trim()
           ? { text: textInput.trim() }
@@ -315,17 +322,64 @@ export default function Home() {
     }
   };
 
+  const handleSuggest = async () => {
+    let lat = latitude;
+    let lng = longitude;
+    
+    // If no location, get it first
+    if (!lat || !lng) {
+      setIsSuggesting(true);
+      try {
+        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
+        });
+        lat = position.coords.latitude;
+        lng = position.coords.longitude;
+        setManualLocation(lat, lng);
+        setSearchValue(`Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+      } catch (err) {
+        setError("Could not get location. Please enter an address.");
+        setIsSuggesting(false);
+        return;
+      }
+    }
+
+    setIsSuggesting(true);
+    setError(null);
+
+    try {
+      const result = await suggestRoute({
+        start_lat: lat,
+        start_lng: lng,
+        distance_km: distance,
+        num_candidates: 10,
+        aspect_ratio: aspectRatio,
+      });
+
+      setGeneratedRoute(result.route);
+      setGeneratedSvg(result.svg_path);
+      setPrompt(result.shape_name);  // Update prompt with suggested shape name
+      setSelectedShape(null);  // Clear predefined shape selection
+      setRouteStats({
+        distance_m: result.distance_m,
+        duration_s: result.duration_s,
+      });
+      setShowModal(false);
+    } catch (err) {
+      console.error("Suggestion failed:", err);
+      setError(err instanceof Error ? err.message : "Failed to suggest route. Try a different location.");
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+
   // Debounced resize - only triggers API after user stops dragging
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const previousAspectRatioRef = useRef<number>(1.0);
   
-  const handleResize = (aspectRatioMultiplier: number) => {
+  const handleResize = (ratio: number, dimension: "width" | "height") => {
     // Store previous aspect ratio for revert on error
     previousAspectRatioRef.current = aspectRatio;
-    
-    // Multiply current aspect ratio by the multiplier from overlay drag
-    const newAspectRatio = Math.max(0.25, Math.min(4.0, aspectRatio * aspectRatioMultiplier));
-    setAspectRatio(newAspectRatio);
     
     // Clear previous timeout
     if (resizeTimeoutRef.current) {
@@ -345,18 +399,39 @@ export default function Home() {
 
       setIsGenerating(true);
       try {
-        const requestPayload = {
+        // Build request based on dimension type
+        const basePayload = {
           start_lat: centerLat,
           start_lng: centerLng,
           distance_km: distance,
-          aspect_ratio: newAspectRatio,
           fast_mode: true,  // Use fast mode for resize
-          ...(mode === "type" && prompt.trim()
+          ...(mode === "image" && imageSvgPath
+            ? { image_svg_path: imageSvgPath }
+            : mode === "type" && prompt.trim()
             ? { prompt: prompt.trim() }
             : mode === "text" && textInput.trim()
             ? { text: textInput.trim() }
             : { shape_id: selectedShape || "heart" }),
         };
+
+        let requestPayload;
+        if (dimension === "width") {
+          // Width drag: use adaptive resize to maximize height within 1.3x distance
+          requestPayload = {
+            ...basePayload,
+            aspect_ratio: aspectRatio,  // Current aspect (backend will compute optimal)
+            adaptive_resize: true,
+            width_ratio: ratio,
+          };
+        } else {
+          // Height drag: direct aspect ratio update
+          const newAspectRatio = Math.max(0.25, Math.min(4.0, aspectRatio * ratio));
+          setAspectRatio(newAspectRatio);
+          requestPayload = {
+            ...basePayload,
+            aspect_ratio: newAspectRatio,
+          };
+        }
 
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
@@ -408,7 +483,9 @@ export default function Home() {
           distance_km: distance,
           aspect_ratio: aspectRatio,
           fast_mode: true,
-          ...(mode === "type" && prompt.trim()
+          ...(mode === "image" && imageSvgPath
+            ? { image_svg_path: imageSvgPath }
+            : mode === "type" && prompt.trim()
             ? { prompt: prompt.trim() }
             : mode === "text" && textInput.trim()
             ? { text: textInput.trim() }
@@ -690,6 +767,12 @@ export default function Home() {
                         } else {
                           setSelectedShape(shape.id);
                           setPrompt(shape.prompt);
+                          // Clear text input to prevent it from overriding the shape selection
+                          setTextInput("");
+                          // Reset mode if in text mode to ensure shape_id is used
+                          if (mode === "text") {
+                            setMode("type");
+                          }
                         }
                       }}
                       style={{
@@ -736,41 +819,50 @@ export default function Home() {
               </div>
 
               {/* Mode Toggle */}
-              <Segmented
-                block
-                value={mode}
-                onChange={(val) => setMode(val as InputMode)}
-                options={[
-                  {
-                    label: (
-                      <Space>
-                        <FontSizeOutlined />
-                        Type Prompt
-                      </Space>
-                    ),
-                    value: "type",
-                  },
-                  {
-                    label: (
-                      <Space>
-                        <EditOutlined />
-                        Draw Shape
-                      </Space>
-                    ),
-                    value: "draw",
-                  },
-                  {
-                    label: (
-                      <Space>
-                        <FontSizeOutlined />
-                        Write Text
-                      </Space>
-                    ),
-                    value: "text",
-                  },
-                ]}
-                style={{ marginBottom: 16 }}
-              />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                {[
+                  { value: "type", icon: <FontSizeOutlined />, label: "Prompt" },
+                  { value: "draw", icon: <EditOutlined />, label: "Draw" },
+                  { value: "text", icon: <FontSizeOutlined />, label: "Text" },
+                  { value: "image", icon: <PictureOutlined />, label: "Upload" },
+                ].map((option) => (
+                  <div
+                    key={option.value}
+                    onClick={() => setMode(option.value as InputMode)}
+                    style={{
+                      padding: "8px 4px",
+                      borderRadius: 10,
+                      border: mode === option.value ? `2px solid ${STRAVA_ORANGE}` : "2px solid #eee",
+                      background: mode === option.value ? "#FFF5F0" : "#fafafa",
+                      cursor: "pointer",
+                      textAlign: "center",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    <div style={{ fontSize: 16, color: mode === option.value ? STRAVA_ORANGE : "#666", marginBottom: 2 }}>
+                      {option.icon}
+                    </div>
+                    <Text strong style={{ fontSize: 12, display: "block", color: mode === option.value ? STRAVA_ORANGE : STRAVA_DARK }}>
+                      {option.label}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+
+              {/* Mode Subtitle */}
+              <Text style={{ fontSize: 12, color: "#888", display: "block", textAlign: "center", marginBottom: 12 }}>
+                {mode === "type" && "✨ Describe your dream route shape"}
+                {mode === "draw" && "🎨 Sketch it yourself (coming soon!)"}
+                {mode === "text" && "🏃 Run your name or initials!"}
+                {mode === "image" && "📸 Turn any image into a route"}
+              </Text>
 
               {/* Prompt Input or Draw Placeholder */}
               {mode === "type" ? (
@@ -795,6 +887,75 @@ export default function Home() {
                   maxLength={10}
                   style={{ marginBottom: 12, fontSize: 24, fontWeight: 700, textAlign: "center" }}
                 />
+              ) : mode === "image" ? (
+                <div style={{ marginBottom: 12 }}>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    id="image-upload"
+                    style={{ display: "none" }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      
+                      setIsUploadingImage(true);
+                      try {
+                        const result = await parseImage(file);
+                        setImageSvgPath(result.svg_path);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to parse image");
+                      } finally {
+                        setIsUploadingImage(false);
+                      }
+                    }}
+                  />
+                  <label htmlFor="image-upload">
+                    <div
+                      style={{
+                        height: imageSvgPath ? 120 : 80,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: imageSvgPath ? "#f0fff0" : "#fafafa",
+                        border: imageSvgPath ? `2px solid ${STRAVA_ORANGE}` : "1px dashed #d9d9d9",
+                        borderRadius: 8,
+                        cursor: isUploadingImage ? "wait" : "pointer",
+                        transition: "all 0.2s",
+                      }}
+                    >
+                      {isUploadingImage ? (
+                        <>
+                          <LoadingOutlined spin style={{ fontSize: 24, color: STRAVA_ORANGE }} />
+                          <Text style={{ marginTop: 8, color: "#666" }}>Processing...</Text>
+                        </>
+                      ) : imageSvgPath ? (
+                        <>
+                          <svg width="60" height="60" viewBox="0 0 100 100" style={{ marginBottom: 4 }}>
+                            <path d={imageSvgPath} fill="none" stroke={STRAVA_ORANGE} strokeWidth="2" />
+                          </svg>
+                          <Text style={{ color: "#52c41a", fontSize: 12 }}>✓ Shape detected! Click to change</Text>
+                        </>
+                      ) : (
+                        <>
+                          <UploadOutlined style={{ fontSize: 24, color: "#999" }} />
+                          <Text style={{ marginTop: 8, color: "#666" }}>Click to upload an image</Text>
+                          <Text style={{ fontSize: 11, color: "#999" }}>PNG, JPG, or SVG</Text>
+                        </>
+                      )}
+                    </div>
+                  </label>
+                  {imageSvgPath && (
+                    <Button 
+                      type="link" 
+                      size="small" 
+                      onClick={() => setImageSvgPath(null)}
+                      style={{ padding: 0, marginTop: 4 }}
+                    >
+                      Clear image
+                    </Button>
+                  )}
+                </div>
               ) : (
                 <div
                   style={{
@@ -970,6 +1131,28 @@ export default function Home() {
                   : latitude
                   ? "Generate Route"
                   : "Get Location & Generate"}
+              </Button>
+
+              {/* Auto-Suggest Button */}
+              <Button
+                block
+                size="large"
+                disabled={isSuggesting || isGenerating}
+                onClick={handleSuggest}
+                loading={isSuggesting}
+                style={{
+                  marginTop: 12,
+                  borderRadius: 8,
+                  height: 44,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  background: isSuggesting ? "#f0f0f0" : "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                  color: isSuggesting ? "#999" : "#fff",
+                  border: "none",
+                  boxShadow: isSuggesting ? "none" : "0 4px 12px rgba(102, 126, 234, 0.4)",
+                }}
+              >
+                {isSuggesting ? "Finding best shape..." : "✨ Suggest Route"}
               </Button>
             </Card>
           </div>

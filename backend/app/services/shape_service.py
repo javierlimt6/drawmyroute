@@ -15,6 +15,38 @@ def load_shapes() -> dict:
     with open(SHAPES_PATH) as f:
         return json.load(f)
 
+
+def compute_optimal_aspect_ratio(
+    current_aspect: float,
+    width_ratio: float,  # >1 means width increased
+) -> float:
+    """
+    Given a width increase, compute the aspect_ratio that maximizes height
+    while keeping expected route distance ≤ 1.3× target.
+    
+    The perimeter-based scaling means:
+    - Width scales by 1/sqrt(aspect_ratio)
+    - Height scales by sqrt(aspect_ratio)
+    
+    When width increases, we allow route distance up to 1.3x target,
+    which gives us headroom to keep a larger height.
+    """
+    # Minimum aspect (perimeter-preserving): if width increases by ratio,
+    # aspect must decrease by ratio^2 to maintain same perimeter
+    min_aspect = current_aspect / (width_ratio ** 2)
+    
+    # Maximum aspect: original height (unchanged)
+    max_aspect = current_aspect
+    
+    # Use 1.3x distance allowance to relax the aspect ratio
+    # This allows the height to be larger than strict perimeter-preserving
+    DISTANCE_ALLOWANCE = 1.3
+    optimal_aspect = min_aspect * DISTANCE_ALLOWANCE
+    
+    # Don't exceed original aspect ratio
+    return min(optimal_aspect, max_aspect)
+
+
 def calculate_score(result: dict, target_distance_km: float, strategy: dict) -> float:
     """
     Weighted scoring: Fidelity > Closure > Efficiency
@@ -255,6 +287,7 @@ async def generate_route_osrm(
     distance_km: float,
     prompt: str | None = None,
     text: str | None = None,
+    image_svg_path: str | None = None,
     aspect_ratio: float = 1.0,
     fast_mode: bool = False
 ) -> dict:
@@ -265,8 +298,13 @@ async def generate_route_osrm(
     """
     import asyncio
     
-    # Logic Branch: Text vs Custom vs Predefined
-    if text:
+    # Logic Branch: Image > Text > Custom > Predefined
+    if image_svg_path:
+        print(f"🖼️ Image SVG Path: {image_svg_path[:80]}...")
+        svg_path = image_svg_path
+        shape_name = "Custom Image"
+        current_shape_id = "image"
+    elif text:
         print(f"📝 Text Input: {text}")
         svg_path = text_to_svg_path_cached(text)
         shape_name = f"Text: {text}"
@@ -325,9 +363,9 @@ async def generate_route_osrm(
     
     print(f"   🔀 Testing {len(variants)} variants ({len(ROTATIONS)} rotations × {len(SCALE_FACTORS)} sizes)")
     
-    # Quality thresholds (relaxed since perimeter-based is more accurate)
+    # Quality thresholds
     MAX_FAILED_SEGMENT_RATIO = 0.20  # Max 20% failed segments (roads may not exist)
-    MAX_DISTANCE_RATIO = 1.8         # Route can't be >1.8x target
+    MAX_DISTANCE_RATIO = 1.3         # Route can't be >1.3x target (tightened from 1.8)
     MIN_DISTANCE_RATIO = 0.5         # Route can't be <50% of target
     MIN_ACCEPTABLE_SCORE = 40.0      # Minimum score to accept
     
@@ -408,8 +446,6 @@ async def generate_route_osrm(
         # No good routes found
         raise ValueError(
             f"Could not find a good route for this location. "
-            f"Tried {len(variants)} variants, all failed quality checks. "
-            f"Try a different starting location with more walkable roads."
         )
     
     # Pick the best
@@ -479,6 +515,7 @@ async def generate_route(
     distance_km: float,
     prompt: str | None = None,
     text: str | None = None,
+    image_svg_path: str | None = None,
     aspect_ratio: float = 1.0,
     fast_mode: bool = False
 ) -> dict:
@@ -492,7 +529,7 @@ async def generate_route(
     print(f"📐 {mode_str} Using algorithm: {algorithm}, aspect_ratio: {aspect_ratio:.2f}")
     
     if algorithm == "osrm":
-        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, text, aspect_ratio, fast_mode)
+        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, text, image_svg_path, aspect_ratio, fast_mode)
     else:
         return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
 
