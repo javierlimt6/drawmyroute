@@ -11,7 +11,6 @@ from app.services.data_store_service import get_shape_by_name
 from app.services.svg_parser import sample_svg_path
 from app.services.geo_scaler import scale_to_gps
 from app.services.osrm_router import snap_to_roads_osrm
-from app.services.shape_service import calculate_score
 from .data_store_service import get_random_shapes
 from .route_generator import route_with_scaling, calculate_approach_distances
 from .scoring import calculate_route_quality
