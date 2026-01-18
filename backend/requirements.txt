@@ -13,3 +13,4 @@ sentence-transformers>=2.2.2
 freetype-py>=2.4.0
 scikit-image>=0.22.0
 potracer
+cairosvg>=2.7.0

@@ -1,529 +1,77 @@
-import json
+"""
+Shape Service - Route generation from SVG shapes
+
+This is the main entry point for route generation. It handles:
+- SVG acquisition from various sources (shape_id, text, image, prompt)
+- Calling the unified route generator
+- Building the response
+"""
+
 import math
 from pathlib import Path
-from app.services.svg_parser import sample_svg_path
-from app.services.geo_scaler import scale_to_gps
-from app.services.map_matcher import snap_to_roads
-from app.services.llm_service import generate_svg_from_prompt
-from app.services.osrm_router import snap_to_roads_osrm
-from app.services.text_to_svg import text_to_svg_path_cached
+import json
+from .route_generator import route_with_scaling, route_with_bounds, calculate_approach_distances
+from .scoring import calculate_route_quality
+from .llm_service import generate_svg_from_prompt
+from .text_to_svg import text_to_svg_path_cached
+from . import routing_config as cfg
 from app.config import settings
 
 SHAPES_PATH = Path(__file__).parent.parent / "data" / "shapes.json"
 
+
 def load_shapes() -> dict:
+    """Load predefined shapes from shapes.json"""
     with open(SHAPES_PATH) as f:
         return json.load(f)
 
 
-def compute_optimal_aspect_ratio(
-    current_aspect: float,
-    width_ratio: float,  # >1 means width increased
-) -> float:
-    """
-    Given a width increase, compute the aspect_ratio that maximizes height
-    while keeping expected route distance ≤ 1.3× target.
-    
-    The perimeter-based scaling means:
-    - Width scales by 1/sqrt(aspect_ratio)
-    - Height scales by sqrt(aspect_ratio)
-    
-    When width increases, we allow route distance up to 1.3x target,
-    which gives us headroom to keep a larger height.
-    """
-    # Minimum aspect (perimeter-preserving): if width increases by ratio,
-    # aspect must decrease by ratio^2 to maintain same perimeter
-    min_aspect = current_aspect / (width_ratio ** 2)
-    
-    # Maximum aspect: original height (unchanged)
-    max_aspect = current_aspect
-    
-    # Use 1.3x distance allowance to relax the aspect ratio
-    # This allows the height to be larger than strict perimeter-preserving
-    DISTANCE_ALLOWANCE = 1.3
-    optimal_aspect = min_aspect * DISTANCE_ALLOWANCE
-    
-    # Don't exceed original aspect ratio
-    return min(optimal_aspect, max_aspect)
+# compute_optimal_aspect_ratio removed - replaced by authoritative bounds
 
 
-def calculate_score(result: dict, target_distance_km: float, strategy: dict) -> float:
-    """
-    Weighted scoring: Fidelity > Closure > Efficiency
-    Higher score is better (0-100 scale).
-    """
-    # Weights (sum to 1.0)
-    W_FIDELITY = 0.60   # Shape quality is king
-    W_CLOSURE = 0.20    # Loop matters for running
-    W_EFFICIENCY = 0.20 # Distance is nice-to-have
-    
-    # --- Fidelity Score (0-1) ---
-    fidelity_score = strategy["fidelity"]
-    
-    # --- Closure Score (0-1) ---
-    coords = result["route"]["coordinates"]
-    if not coords:
-        return 0.0
-    
-    start_pt = coords[0]
-    end_pt = coords[-1]
-    
-    # Euclidean distance for closure check (in degrees)
-    gap_deg = math.sqrt((start_pt[0]-end_pt[0])**2 + (start_pt[1]-end_pt[1])**2)
-    gap_m = gap_deg * 111000  # Convert to meters
-    
-    # Closure: 1.0 if gap < 10m, drops smoothly
-    closure_score = 1.0 / (gap_m / 100.0 + 1.0)
-    
-    # --- Efficiency Score (0-1) ---
-    actual_dist_km = result["distance_m"] / 1000.0
-    if target_distance_km > 0:
-        distance_ratio = actual_dist_km / target_distance_km
-        # Accept 0.7x to 1.5x target as "good enough"
-        if 0.7 <= distance_ratio <= 1.5:
-            efficiency_score = 1.0 - abs(1.0 - distance_ratio) * 0.5
-        else:
-            efficiency_score = 0.3  # Penalty but don't kill the score
-    else:
-        efficiency_score = 0.5
-    
-    # --- Weighted Sum ---
-    final_score = (
-        W_FIDELITY * fidelity_score +
-        W_CLOSURE * closure_score +
-        W_EFFICIENCY * efficiency_score
-    ) * 100
-    
-    return final_score
-
-async def generate_route_from_shape(
-    shape_id: str | None,
-    start_lat: float,
-    start_lng: float,
-    distance_km: float,
-    prompt: str | None = None,
-    aspect_ratio: float = 1.0
-) -> dict:
-    """V1: Generate route from predefined shape OR custom prompt."""
-    
-    # Logic Branch: Custom vs Predefined
-    if prompt:
-        print(f"✨ Custom Prompt: {prompt}")
-        svg_path = generate_svg_from_prompt(prompt, distance_km)
-        shape_name = f"Custom: {prompt}"
-        current_shape_id = "custom"
-    elif shape_id:
-        shapes = load_shapes()
-        if shape_id not in shapes:
-            raise ValueError(f"Unknown shape: {shape_id}")
-        svg_path = shapes[shape_id]["svg_path"]
-        shape_name = shapes[shape_id]["name"]
-        current_shape_id = shape_id
-    else:
-        raise ValueError("No shape specified")
-    
-    # Calculate distance-proportional radius
-    # Higher multiplier = more flexibility, less overlap
-    # For 5km: base=150m, for 20km: base=600m
-    base_radius = max(100, int(distance_km * 30))  # 30m per km, min 100m
-    
-    print(f"   📏 Distance: {distance_km}km -> Base radius: {base_radius}m")
-    
-    # Strategies: High point count for shape detail
-    # Larger base shape (divisor 4.0) prevents zig-zags
-    strategies = [
-        # Maximum Fidelity - 50 points (chunked routing)
-        {"points": 50, "radius": base_radius,       "profile": "walking", "fidelity": 1.0},
-        {"points": 50, "radius": base_radius * 2,   "profile": "walking", "fidelity": 0.95},
-        
-        # High Fidelity - 40 points
-        {"points": 40, "radius": base_radius * 2,   "profile": "walking", "fidelity": 0.85},
-        {"points": 40, "radius": base_radius * 3,   "profile": "walking", "fidelity": 0.80},
-        
-        # Fallback - 30 points
-        {"points": 30, "radius": base_radius * 3,   "profile": "walking", "fidelity": 0.65},
-        
-        # Cycling fallback
-        {"points": 40, "radius": base_radius * 3,   "profile": "cycling", "fidelity": 0.50},
-        
-        # Last Resort
-        {"points": 20, "radius": base_radius * 5,   "profile": "walking", "fidelity": 0.30},
-    ]
-    
-    # === ITERATIVE SCALING ===
-    # Try to match target distance by adjusting scale factor
-    MAX_ITERATIONS = 3
-    TOLERANCE = 0.25  # Accept if within 25% of target
-    
-    scale_factor = 1.0
-    best_overall = None
-    
-    print(f"🔄 Generating '{current_shape_id}' ({distance_km}km) at {start_lat}, {start_lng}")
-    
-    for iteration in range(MAX_ITERATIONS):
-        successful_results = []
-        last_error = None
-        
-        print(f"   🔁 Iteration {iteration + 1}/{MAX_ITERATIONS} (scale: {scale_factor:.2f})")
-        
-        for strategy in strategies:
-            try:
-                # 1. Parse & Scale with current scale_factor
-                abstract_points = sample_svg_path(svg_path, num_points=strategy["points"])
-                gps_points = scale_to_gps(abstract_points, start_lat, start_lng, distance_km, scale_factor, aspect_ratio=aspect_ratio)
-                
-                # 2. Try to map match
-                result = await snap_to_roads(
-                    gps_points, 
-                    profile=strategy["profile"], 
-                    radius=strategy["radius"]
-                )
-                
-                # 3. Calculate Score
-                score = calculate_score(result, distance_km, strategy)
-                
-                result_data = {
-                    "shape_id": shape_id,
-                    "shape_name": shapes[shape_id]["name"],
-                    "input_prompt": prompt,
-                    "original_points": abstract_points,
-                    "gps_points": gps_points,
-                    "score": score,
-                    "strategy": strategy,
-                    "scale_factor": scale_factor,
-                    **result
-                }
-                
-                successful_results.append(result_data)
-                print(f"      ✅ {strategy['points']}pts -> Score: {score:.1f}, Dist: {result['distance_m']:.0f}m")
-                
-                # Early exit if score is great
-                if strategy["fidelity"] >= 0.9 and score > 80.0:
-                    break
-                
-            except Exception as e:
-                last_error = e
-                continue
-        
-        if not successful_results:
-            if iteration == MAX_ITERATIONS - 1:
-                raise ValueError(f"Could not generate route. Last error: {last_error}")
-            continue
-        
-        # Pick the best result from this iteration
-        best_result = max(successful_results, key=lambda x: x["score"])
-        actual_dist_km = best_result["distance_m"] / 1000.0
-        distance_ratio = actual_dist_km / distance_km
-        
-        print(f"      📊 Target: {distance_km}km, Actual: {actual_dist_km:.1f}km, Ratio: {distance_ratio:.2f}")
-        
-        # Check if within tolerance
-        if abs(distance_ratio - 1.0) <= TOLERANCE:
-            print(f"   ✅ Within tolerance ({TOLERANCE*100:.0f}%), accepting result")
-            best_overall = best_result
-            break
-        
-        # Update best overall if this is better
-        if best_overall is None or best_result["score"] > best_overall["score"]:
-            best_overall = best_result
-        
-        # Adjust scale factor for next iteration
-        # If route is too long, make shape smaller; if too short, make shape bigger
-        adjustment = distance_km / actual_dist_km
-        # Dampen the adjustment to avoid overshooting
-        scale_factor *= (1.0 + (adjustment - 1.0) * 0.7)
-        scale_factor = max(0.2, min(3.0, scale_factor))  # Clamp to reasonable range
-        
-        print(f"   🔧 Adjusting scale to {scale_factor:.2f} for next iteration")
-    
-    if best_overall is None:
-        raise ValueError("Could not generate route after all iterations")
-    
-    best_result = best_overall
-    print(f"🏆 Best result: Score {best_result['score']:.2f}, Dist: {best_result['distance_m']:.0f}m")
-    
-    # Calculate distance from user's position to route start and back
-    route_coords = best_result["route"]["coordinates"]
-    if route_coords:
-        route_start = route_coords[0]   # [lng, lat]
-        route_end = route_coords[-1]    # [lng, lat]
-        
-        # Haversine-like approximation for short distances
-        def calc_distance_m(lat1, lng1, lat2, lng2):
-            dlat = (lat2 - lat1) * 111320  # meters per degree lat
-            dlng = (lng2 - lng1) * 111320 * math.cos(math.radians(lat1))
-            return math.sqrt(dlat**2 + dlng**2)
-        
-        # Distance from user to route start
-        approach_m = calc_distance_m(start_lat, start_lng, route_start[1], route_start[0])
-        # Distance from route end back to user
-        return_m = calc_distance_m(route_end[1], route_end[0], start_lat, start_lng)
-        
-        best_result["approach_distance_m"] = round(approach_m, 1)
-        best_result["return_distance_m"] = round(return_m, 1)
-        best_result["total_with_travel_m"] = round(best_result["distance_m"] + approach_m + return_m, 1)
-        
-        print(f"   📍 Approach: {approach_m:.0f}m, Return: {return_m:.0f}m")
-        print(f"🏁 Shape: {best_result['distance_m']:.0f}m, Total w/ travel: {best_result['total_with_travel_m']:.0f}m")
-    else:
-        best_result["approach_distance_m"] = 0
-        best_result["return_distance_m"] = 0
-        best_result["total_with_travel_m"] = best_result["distance_m"]
-        print(f"🏁 Final: {best_result['strategy']['points']}pts, Dist: {best_result['distance_m']:.0f}m")
-    
-    # Add debug info to response
-    best_result["debug_log"] = [
-        f"Strategy {r['strategy']['points']}pts/{r['strategy']['radius']}m -> Score: {r['score']:.1f}"
-        for r in successful_results
-    ]
-    best_result["algorithm"] = "mapbox"
-    # Always include rotation_deg at top level for frontend overlay (0 for mapbox)
-    best_result["rotation_deg"] = 0
-    return best_result
-
-
-async def generate_route_osrm(
-    shape_id: str | None,
-    start_lat: float,
-    start_lng: float,
-    distance_km: float,
+def get_svg_path_and_metadata(
+    shape_id: str | None = None,
     prompt: str | None = None,
     text: str | None = None,
     image_svg_path: str | None = None,
-    aspect_ratio: float = 1.0,
-    fast_mode: bool = False
-) -> dict:
+    distance_km: float = 5.0
+) -> tuple[str, str, str]:
     """
-    Generate route using OSRM with multi-variant optimization.
-    Tests multiple rotations and sizes in parallel to find the best fit.
-    fast_mode: Skip optimization for faster resize response.
-    """
-    import asyncio
+    Get SVG path from any of the supported sources.
     
-    # Logic Branch: Image > Text > Custom > Predefined
+    Priority: image_svg_path > text > prompt > shape_id
+    
+    Returns:
+        (svg_path, shape_name, shape_id)
+    """
     if image_svg_path:
         print(f"🖼️ Image SVG Path: {image_svg_path[:80]}...")
-        svg_path = image_svg_path
-        shape_name = "Custom Image"
-        current_shape_id = "image"
-    elif text:
+        return image_svg_path, "Custom Image", "image"
+    
+    if text:
         print(f"📝 Text Input: {text}")
         svg_path = text_to_svg_path_cached(text)
-        shape_name = f"Text: {text}"
-        current_shape_id = "text"
-    elif prompt:
+        return svg_path, f"Text: {text}", "text"
+    
+    if prompt:
         print(f"✨ Custom Prompt: {prompt}")
         svg_path = generate_svg_from_prompt(prompt, distance_km)
-        shape_name = f"Custom: {prompt}"
-        current_shape_id = "custom"
-    elif shape_id:
+        return svg_path, f"Custom: {prompt}", "custom"
+    
+    if shape_id:
         shapes = load_shapes()
         if shape_id not in shapes:
             raise ValueError(f"Unknown shape: {shape_id}")
-        svg_path = shapes[shape_id]["svg_path"]
-        shape_name = shapes[shape_id]["name"]
-        current_shape_id = shape_id
-    else:
-        raise ValueError("No shape specified")
+        return shapes[shape_id]["svg_path"], shapes[shape_id]["name"], shape_id
     
-    # Distance-based point scaling for optimal performance
-    def get_num_points(dist_km: float, fast: bool) -> int:
-        if fast:
-            return 30  # Minimal for resize/move
-        elif dist_km <= 10:
-            return 40  # Short routes
-        elif dist_km <= 25:
-            return 60  # Medium routes
-        else:
-            return 80  # Long routes
-    
-    # Fast mode: Single variant with fewer points for resize
-    if fast_mode:
-        NUM_POINTS = get_num_points(distance_km, True)
-        ROTATIONS = [0]
-        SCALE_FACTORS = [1.0]
-        print(f"⚡ [OSRM Fast] Generating '{current_shape_id}' ({distance_km}km, {NUM_POINTS} pts)")
-    else:
-        NUM_POINTS = get_num_points(distance_km, False)
-        ROTATIONS = [0, 90]  # Reduced from 4 to 2 for speed
-        # Wider scale range: smaller values help when roads add more distance
-        SCALE_FACTORS = [0.5, 0.7, 0.9, 1.0, 1.1]  # 5 values for 10 total variants
-        print(f"🔄 [OSRM Multi-Variant] Generating '{current_shape_id}' ({distance_km}km, {NUM_POINTS} pts)")
-    
-    # Parse SVG once
-    abstract_points = sample_svg_path(svg_path, num_points=NUM_POINTS)
-    
-    # Generate all variant combinations
-    variants = []
-    for rotation in ROTATIONS:
-        for scale in SCALE_FACTORS:
-            variants.append({
-                "rotation": rotation,
-                "scale": scale,
-                "label": f"R{rotation}°/S{scale}"
-            })
-    
-    print(f"   🔀 Testing {len(variants)} variants ({len(ROTATIONS)} rotations × {len(SCALE_FACTORS)} sizes)")
-    
-    # Quality thresholds
-    MAX_FAILED_SEGMENT_RATIO = 0.20  # Max 20% failed segments (roads may not exist)
-    MAX_DISTANCE_RATIO = 1.3         # Route can't be >1.3x target (tightened from 1.8)
-    MIN_DISTANCE_RATIO = 0.5         # Route can't be <50% of target
-    MIN_ACCEPTABLE_SCORE = 40.0      # Minimum score to accept
-    
-    async def evaluate_variant(variant: dict) -> dict:
-        """Evaluate a single variant and return result with score."""
-        try:
-            # Scale with rotation and size
-            gps_points = scale_to_gps(
-                abstract_points,
-                start_lat, start_lng,
-                distance_km,
-                scale_factor=variant["scale"],
-                rotation_deg=variant["rotation"],
-                aspect_ratio=aspect_ratio
-            )
-            
-            # Route using OSRM
-            result = await snap_to_roads_osrm(gps_points, profile="foot")
-            
-            # --- QUALITY CHECKS ---
-            failed_ratio = result.get("failed_segments", 0) / result.get("total_segments", 1)
-            actual_km = result["distance_m"] / 1000.0
-            distance_ratio = actual_km / distance_km
-            
-            # Check if this variant is acceptable
-            rejection_reasons = []
-            if failed_ratio > MAX_FAILED_SEGMENT_RATIO:
-                rejection_reasons.append(f"too many failed segments ({failed_ratio*100:.0f}%)")
-            if distance_ratio > MAX_DISTANCE_RATIO:
-                rejection_reasons.append(f"route too long ({distance_ratio:.1f}x target)")
-            if distance_ratio < MIN_DISTANCE_RATIO:
-                rejection_reasons.append(f"route too short ({distance_ratio:.1f}x target)")
-            
-            if rejection_reasons:
-                return {
-                    "success": False, 
-                    "variant": variant, 
-                    "error": "; ".join(rejection_reasons),
-                    "distance_m": result["distance_m"],
-                    "failed_ratio": failed_ratio
-                }
-            
-            # Calculate score
-            strategy = {"points": NUM_POINTS, "fidelity": 1.0, "profile": "foot"}
-            score = calculate_score(result, distance_km, strategy)
-            
-            # Penalize based on failed segments and distance accuracy
-            distance_accuracy = 1.0 - abs(distance_ratio - 1.0)
-            segment_quality = 1.0 - failed_ratio
-            adjusted_score = score * (0.5 + 0.25 * max(0, distance_accuracy) + 0.25 * segment_quality)
-            
-            return {
-                "success": True,
-                "variant": variant,
-                "gps_points": gps_points,
-                "result": result,
-                "score": adjusted_score,
-                "distance_m": result["distance_m"],
-                "failed_ratio": failed_ratio
-            }
-        except Exception as e:
-            return {"success": False, "variant": variant, "error": str(e)}
-    
-    # Run all variants in parallel
-    results = await asyncio.gather(*[evaluate_variant(v) for v in variants])
-    
-    # Filter successful results that meet minimum score
-    successful = [r for r in results if r.get("success") and r.get("score", 0) >= MIN_ACCEPTABLE_SCORE]
-    rejected = [r for r in results if not r.get("success")]
-    
-    # Log rejection reasons
-    if rejected:
-        print(f"   ⚠️ {len(rejected)} variants rejected:")
-        for r in rejected[:3]:
-            print(f"      {r['variant']['label']}: {r.get('error', 'unknown')}")
-    
-    if not successful:
-        # No good routes found
-        raise ValueError(
-            f"Could not find a good route for this location. "
-        )
-    
-    # Pick the best
-    best = max(successful, key=lambda x: x["score"])
-    
-    # Log results
-    print(f"   📊 Results: {len(successful)}/{len(variants)} passed quality checks")
-    for r in sorted(successful, key=lambda x: -x["score"])[:5]:
-        print(f"      {r['variant']['label']}: Score {r['score']:.1f}, Dist: {r['distance_m']:.0f}m")
-    
-    print(f"🏆 Best: {best['variant']['label']} (Score: {best['score']:.1f})")
-    
-    # Build final result
-    result_data = {
-        "shape_id": current_shape_id,
-        "shape_name": shape_name,
-        "input_prompt": prompt,
-        "svg_path": svg_path,
-        "original_points": abstract_points,
-        "gps_points": best["gps_points"],
-        "score": best["score"],
-        "strategy": {
-            "points": NUM_POINTS,
-            "fidelity": 1.0,
-            "rotation": best["variant"]["rotation"],
-            "scale": best["variant"]["scale"]
-        },
-        "algorithm": "osrm-multivariant",
-        **best["result"]
-    }
-    
-    # Calculate approach/return distances
-    route_coords = best["result"]["route"]["coordinates"]
-    if route_coords:
-        route_start = route_coords[0]
-        route_end = route_coords[-1]
-        
-        def calc_distance_m(lat1, lng1, lat2, lng2):
-            dlat = (lat2 - lat1) * 111320
-            dlng = (lng2 - lng1) * 111320 * math.cos(math.radians(lat1))
-            return math.sqrt(dlat**2 + dlng**2)
-        
-        approach_m = calc_distance_m(start_lat, start_lng, route_start[1], route_start[0])
-        return_m = calc_distance_m(route_end[1], route_end[0], start_lat, start_lng)
-        
-        result_data["approach_distance_m"] = round(approach_m, 1)
-        result_data["return_distance_m"] = round(return_m, 1)
-        result_data["total_with_travel_m"] = round(best["result"]["distance_m"] + approach_m + return_m, 1)
-    else:
-        result_data["approach_distance_m"] = 0
-        result_data["return_distance_m"] = 0
-        result_data["total_with_travel_m"] = best["result"]["distance_m"]
-    
-    # Debug log
-    result_data["debug_log"] = [
-        f"Multi-variant: {len(variants)} candidates",
-        f"Best: {best['variant']['label']}",
-        f"Top 3: {', '.join(r['variant']['label'] for r in sorted(successful, key=lambda x: -x['score'])[:3])}"
-    ]
-    # Always include rotation_deg at top level for frontend overlay
-    import re
-    label = best["variant"]["label"]  # e.g., "R90°/S0.5"
-    match = re.match(r"R([-\d.]+)°/S", label)
-    if match:
-        rotation_deg = float(match.group(1))
-    else:
-        rotation_deg = 0
-    result_data["rotation_deg"] = rotation_deg
-    return result_data
+    raise ValueError("No shape specified")
 
 
 async def generate_route(
-    shape_id: str | None,
-    start_lat: float,
-    start_lng: float,
-    distance_km: float,
+    shape_id: str | None = None,
+    start_lat: float = 0,
+    start_lng: float = 0,
+    distance_km: float = 5.0,
     prompt: str | None = None,
     text: str | None = None,
     image_svg_path: str | None = None,
@@ -532,14 +80,207 @@ async def generate_route(
 ) -> dict:
     """
     Main entry point for route generation.
-    Selects algorithm based on ROUTING_ALGORITHM config setting.
-    fast_mode: Skip multi-variant optimization for faster resize response.
-    """
-    algorithm = settings.ROUTING_ALGORITHM
-    mode_str = "[FAST]" if fast_mode else ""
-    print(f"📐 {mode_str} Using algorithm: {algorithm}, aspect_ratio: {aspect_ratio:.2f}")
     
-    if algorithm == "osrm":
-        return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, text, image_svg_path, aspect_ratio, fast_mode)
-    else:
-        return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
+    Uses iterative scaling to find the right size, which is simpler and more
+    effective than testing multiple fixed variants.
+    
+    Args:
+        shape_id: Predefined shape ID from shapes.json
+        start_lat: Center latitude
+        start_lng: Center longitude
+        distance_km: Target distance in km
+        prompt: LLM prompt for custom shape
+        text: Text to convert to SVG (e.g., "NUS", "67")
+        image_svg_path: Pre-converted SVG path from uploaded image
+        aspect_ratio: Shape stretch factor (>1 = taller)
+        fast_mode: If True, use fewer points for faster resize/move
+    
+    Returns:
+        dict with route GeoJSON, distance, score, metadata
+    """
+    # Get SVG path from appropriate source
+    svg_path, shape_name, current_shape_id = get_svg_path_and_metadata(
+        shape_id=shape_id,
+        prompt=prompt,
+        text=text,
+        image_svg_path=image_svg_path,
+        distance_km=distance_km
+    )
+    
+    # Choose point count based on mode
+    num_points = 50 if fast_mode else cfg.POINTS_DEFAULT
+    
+    print(f"📐 Generating '{current_shape_id}' ({distance_km}km, aspect={aspect_ratio:.2f})")
+    
+    # Generate route using iterative scaling
+    routing_result = await route_with_scaling(
+        svg_path=svg_path,
+        start_lat=start_lat,
+        start_lng=start_lng,
+        distance_km=distance_km,
+        aspect_ratio=aspect_ratio,
+        rotation_deg=0,  # Could add rotation support later if needed
+        num_points=num_points
+    )
+    
+    # Extract results
+    osrm_result = routing_result["result"]
+    route_coords = osrm_result["route"]["coordinates"]
+    
+    # Calculate approach/return distances
+    travel_distances = calculate_approach_distances(start_lat, start_lng, route_coords)
+    
+    # Build response
+    response = {
+        # Identity
+        "shape_id": current_shape_id,
+        "shape_name": shape_name,
+        "input_prompt": prompt,
+        "svg_path": svg_path,
+        
+        # Route data
+        "route": osrm_result["route"],
+        "distance_m": osrm_result["distance_m"],
+        "duration_s": osrm_result["duration_s"],
+        
+        # Quality metrics
+        "score": routing_result["score"],
+        "scale_factor": routing_result["scale_factor"],
+        
+        # Travel distances
+        "approach_distance_m": travel_distances["approach_distance_m"],
+        "return_distance_m": travel_distances["return_distance_m"],
+        "total_with_travel_m": round(
+            osrm_result["distance_m"] + 
+            travel_distances["approach_distance_m"] + 
+            travel_distances["return_distance_m"], 1
+        ),
+        
+        # Metadata
+        "algorithm": "iterative-scaling",
+        "rotation_deg": 0,
+        "gps_points": routing_result["gps_points"],
+        "original_points": [],  # Not needed in response
+        
+        # Debug info
+        "debug_log": [
+            f"scale_factor: {routing_result['scale_factor']:.2f}",
+            f"distance_ratio: {routing_result['distance_ratio']:.2f}"
+        ]
+    }
+    
+    print(f"🏁 Done: {osrm_result['distance_m']:.0f}m, score={routing_result['score']:.0f}")
+    
+    return response
+
+
+async def generate_route_with_bounds(
+    shape_id: str | None = None,
+    prompt: str | None = None,
+    text: str | None = None,
+    image_svg_path: str | None = None,
+    min_lat: float = 0,
+    max_lat: float = 0,
+    min_lng: float = 0,
+    max_lng: float = 0,
+    fast_mode: bool = False
+) -> dict:
+    """
+    Generate a route that fits EXACTLY within the specified GPS bounds.
+    
+    This is the authoritative bounds function - the bounding box stays exactly
+    where the user dragged it. No iterative scaling or aspect ratio adjustment.
+    
+    Args:
+        shape_id: Predefined shape ID from shapes.json
+        prompt: LLM prompt for custom shape
+        text: Text to convert to SVG (e.g., "NUS", "67")
+        image_svg_path: Pre-converted SVG path from uploaded image
+        min_lat, max_lat, min_lng, max_lng: Target GPS bounding box
+        fast_mode: If True, use fewer points for faster resize/move
+    
+    Returns:
+        dict with route GeoJSON, distance, score, metadata
+    """
+    # Compute distance from bounds for SVG generation
+    center_lat = (min_lat + max_lat) / 2
+    center_lng = (min_lng + max_lng) / 2
+    lat_span_km = (max_lat - min_lat) * 111.32
+    lng_span_km = (max_lng - min_lng) * 111.32 * math.cos(math.radians(center_lat))
+    estimated_perimeter_km = 2 * (lat_span_km + lng_span_km)
+    
+    # Get SVG path from appropriate source
+    svg_path, shape_name, current_shape_id = get_svg_path_and_metadata(
+        shape_id=shape_id,
+        prompt=prompt,
+        text=text,
+        image_svg_path=image_svg_path,
+        distance_km=estimated_perimeter_km * 1.4  # Rough estimate
+    )
+    
+    # Choose point count based on mode
+    num_points = 50 if fast_mode else cfg.POINTS_DEFAULT
+    
+    print(f"📦 Generating '{current_shape_id}' with bounds")
+    
+    # Generate route using bounds-based scaling (no iteration!)
+    routing_result = await route_with_bounds(
+        svg_path=svg_path,
+        min_lat=min_lat,
+        max_lat=max_lat,
+        min_lng=min_lng,
+        max_lng=max_lng,
+        num_points=num_points
+    )
+    
+    # Extract results
+    osrm_result = routing_result["result"]
+    route_coords = osrm_result["route"]["coordinates"]
+    
+    # Calculate approach/return distances from center
+    travel_distances = calculate_approach_distances(center_lat, center_lng, route_coords)
+    
+    # Build response
+    response = {
+        # Identity
+        "shape_id": current_shape_id,
+        "shape_name": shape_name,
+        "input_prompt": prompt,
+        "svg_path": svg_path,
+        
+        # Route data
+        "route": osrm_result["route"],
+        "distance_m": osrm_result["distance_m"],
+        "duration_s": osrm_result["duration_s"],
+        
+        # Quality metrics
+        "score": routing_result["score"],
+        "scale_factor": routing_result["scale_factor"],
+        
+        # Travel distances
+        "approach_distance_m": travel_distances["approach_distance_m"],
+        "return_distance_m": travel_distances["return_distance_m"],
+        "total_with_travel_m": round(
+            osrm_result["distance_m"] + 
+            travel_distances["approach_distance_m"] + 
+            travel_distances["return_distance_m"], 1
+        ),
+        
+        # Metadata
+        "algorithm": "bounds-based",
+        "rotation_deg": 0,
+        "gps_points": routing_result["gps_points"],
+        "original_points": [],
+        
+        # Bounds metadata
+        "bounds": {
+            "min_lat": min_lat,
+            "max_lat": max_lat,
+            "min_lng": min_lng,
+            "max_lng": max_lng,
+        }
+    }
+    
+    print(f"🏁 Done: {osrm_result['distance_m']:.0f}m, score={routing_result['score']:.0f}")
+    
+    return response

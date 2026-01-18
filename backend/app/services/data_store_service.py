@@ -1,5 +1,5 @@
 """
-Data Store Service - Loads and samples SVG paths from data_store.json
+Data Store Service - Loads and samples SVG paths from paths.json
 """
 import json
 import random
@@ -33,6 +33,54 @@ def load_data_store() -> dict:
         print(f"📚 Data Store Loaded: {len(_data_store_cache)} icons (Main: {len(main_store)}, Material: {len(material_store)})")
         
     return _data_store_cache
+
+
+def _scale_24_to_100(svg_d: str) -> str:
+    """
+    Scale SVG path from 0-24 coordinate system (Material Design Icons)
+    to 0-100 coordinate system (frontend overlay expects).
+    Preserves 0 and 1 as integers for arc command flags.
+    """
+    import re
+    scale = 100 / 24
+    
+    result = []
+    i = 0
+    
+    while i < len(svg_d):
+        char = svg_d[i]
+        
+        if char.isalpha():
+            result.append(char)
+            i += 1
+        elif char in ' ,\t\n':
+            result.append(char)
+            i += 1
+        elif char == '-' or char.isdigit() or char == '.':
+            j = i
+            if svg_d[j] == '-':
+                j += 1
+            while j < len(svg_d) and (svg_d[j].isdigit() or svg_d[j] == '.'):
+                j += 1
+            num_str = svg_d[i:j]
+            try:
+                num = float(num_str)
+                # Keep 0 and 1 as integers (for arc flags)
+                if num == 0:
+                    result.append("0")
+                elif num == 1:
+                    result.append("1")
+                else:
+                    scaled = num * scale
+                    result.append(f"{scaled:.1f}")
+            except ValueError:
+                result.append(num_str)
+            i = j
+        else:
+            result.append(char)
+            i += 1
+    
+    return ''.join(result)
 
 
 def is_continuous_path(svg_path: str) -> bool:
@@ -80,7 +128,10 @@ def get_random_shapes(num_shapes: int = 10) -> list[tuple[str, str]]:
     
     print(f"📊 [DataStore] {len(continuous_items)}/{len(data)} shapes are continuous paths")
     
-    return random.sample(continuous_items, min(num_shapes, len(continuous_items)))
+    sampled = random.sample(continuous_items, min(num_shapes, len(continuous_items)))
+    
+    # Scale all paths from 0-24 to 0-100
+    return [(name, _scale_24_to_100(path)) for name, path in sampled]
 
 
 def get_all_shape_names() -> list[str]:
@@ -89,5 +140,6 @@ def get_all_shape_names() -> list[str]:
 
 
 def get_shape_by_name(name: str) -> str | None:
-    """Get a specific shape's SVG path by name."""
-    return load_data_store().get(name)
+    """Get a specific shape's SVG path by name (scaled to 0-100)."""
+    path = load_data_store().get(name)
+    return _scale_24_to_100(path) if path else None
