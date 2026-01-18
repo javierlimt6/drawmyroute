@@ -185,6 +185,7 @@ async def generate_route_from_shape(
                 result_data = {
                     "shape_id": shape_id,
                     "shape_name": shapes[shape_id]["name"],
+                    "input_prompt": prompt,
                     "original_points": abstract_points,
                     "gps_points": gps_points,
                     "score": score,
@@ -276,7 +277,8 @@ async def generate_route_from_shape(
         for r in successful_results
     ]
     best_result["algorithm"] = "mapbox"
-    
+    # Always include rotation_deg at top level for frontend overlay (0 for mapbox)
+    best_result["rotation_deg"] = 0
     return best_result
 
 
@@ -462,6 +464,7 @@ async def generate_route_osrm(
     result_data = {
         "shape_id": current_shape_id,
         "shape_name": shape_name,
+        "input_prompt": prompt,
         "svg_path": svg_path,
         "original_points": abstract_points,
         "gps_points": best["gps_points"],
@@ -504,7 +507,15 @@ async def generate_route_osrm(
         f"Best: {best['variant']['label']}",
         f"Top 3: {', '.join(r['variant']['label'] for r in sorted(successful, key=lambda x: -x['score'])[:3])}"
     ]
-    
+    # Always include rotation_deg at top level for frontend overlay
+    import re
+    label = best["variant"]["label"]  # e.g., "R90°/S0.5"
+    match = re.match(r"R([-\d.]+)°/S", label)
+    if match:
+        rotation_deg = float(match.group(1))
+    else:
+        rotation_deg = 0
+    result_data["rotation_deg"] = rotation_deg
     return result_data
 
 
@@ -532,5 +543,3 @@ async def generate_route(
         return await generate_route_osrm(shape_id, start_lat, start_lng, distance_km, prompt, text, image_svg_path, aspect_ratio, fast_mode)
     else:
         return await generate_route_from_shape(shape_id, start_lat, start_lng, distance_km, prompt, aspect_ratio)
-
-

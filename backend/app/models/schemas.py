@@ -25,11 +25,13 @@ class RouteRequest(BaseModel):
 class RouteResponse(BaseModel):
     shape_id: str
     shape_name: str
+    input_prompt: Optional[str] = None
     svg_path: str
     original_points: list[tuple[float, float]]
     gps_points: list[tuple[float, float]]
     route: dict  # GeoJSON LineString
     distance_m: float
+    rotation_deg: float = 0
     duration_s: float
 
 

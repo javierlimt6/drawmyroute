@@ -17,6 +17,7 @@ interface RouteResizeOverlayProps {
   onMove?: (newLat: number, newLng: number) => void;
   disabled?: boolean;
   svgPath?: string | null;
+  rotationDeg?: number; // NEW: rotation in degrees
 }
 
 export default function RouteResizeOverlay({
@@ -26,6 +27,7 @@ export default function RouteResizeOverlay({
   onMove,
   disabled = false,
   svgPath,
+  rotationDeg = 0,
 }: RouteResizeOverlayProps) {
   const [screenBounds, setScreenBounds] = useState<{
     left: number;
@@ -35,7 +37,9 @@ export default function RouteResizeOverlay({
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragEdge, setDragEdge] = useState<string | null>(null);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(
+    null
+  );
   const [initialBounds, setInitialBounds] = useState<{
     left: number;
     top: number;
@@ -84,7 +88,7 @@ export default function RouteResizeOverlay({
     if (disabled) return;
     e.preventDefault();
     e.stopPropagation();
-    
+
     setIsDragging(true);
     setDragEdge(edge);
     setDragStart({ x: e.clientX, y: e.clientY });
@@ -100,7 +104,7 @@ export default function RouteResizeOverlay({
     const handleMouseMove = (e: MouseEvent) => {
       const deltaX = e.clientX - dragStart.x;
       const deltaY = e.clientY - dragStart.y;
-      
+
       let newWidth = initialBounds.width;
       let newHeight = initialBounds.height;
       let newLeft = initialBounds.left;
@@ -144,7 +148,7 @@ export default function RouteResizeOverlay({
 
     const handleMouseUp = () => {
       setIsDragging(false);
-      
+
       if (screenBounds && initialBounds && mapRef) {
         if (dragEdge === "center" && onMove) {
           // Calculate new center GPS coordinates
@@ -167,7 +171,7 @@ export default function RouteResizeOverlay({
           }
         }
       }
-      
+
       setDragStart(null);
       setDragEdge(null);
       setInitialBounds(null);
@@ -180,7 +184,16 @@ export default function RouteResizeOverlay({
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDragging, dragStart, dragEdge, initialBounds, screenBounds, onResize, onMove, mapRef]);
+  }, [
+    isDragging,
+    dragStart,
+    dragEdge,
+    initialBounds,
+    screenBounds,
+    onResize,
+    onMove,
+    mapRef,
+  ]);
 
   if (!screenBounds || !bounds) return null;
 
@@ -226,15 +239,17 @@ export default function RouteResizeOverlay({
             position: "absolute",
             top: 0,
             left: 0,
-            opacity: 0.4,
+            opacity: 0.6,
             pointerEvents: "none",
+            transform: `rotate(${rotationDeg}deg)`,
+            transformOrigin: "50% 50%",
           }}
         >
           <path
             d={svgPath}
             fill="none"
-            stroke="#FC4C02"
-            strokeWidth="2"
+            stroke="#000"
+            strokeWidth="4"
             vectorEffect="non-scaling-stroke"
           />
         </svg>

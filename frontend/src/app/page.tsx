@@ -151,17 +151,21 @@ export default function Home() {
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
   const [distance, setDistance] = useState(10); // Always stored in km
   const [unit, setUnit] = useState<"km" | "mi">("km");
-  const [targetPace, setTargetPace] = useState(6); // min/km (default 6:00)
+  // targetPace removed
   const [searchValue, setSearchValue] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedRoute, setGeneratedRoute] =
     useState<GeoJSON.LineString | null>(null);
   const [generatedSvg, setGeneratedSvg] = useState<string | null>(null);
+  const [inputPrompt, setInputPrompt] = useState<string | null>(null);
+  const [rotationDeg, setRotationDeg] = useState<number>(0);
   const [aspectRatio, setAspectRatio] = useState(1.0); // For interactive resize
-  const [routeCenter, setRouteCenter] = useState<{ lat: number; lng: number } | null>(null); // Separate from orange dot
+  const [routeCenter, setRouteCenter] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null); // Separate from orange dot
   const [routeStats, setRouteStats] = useState<{
     distance_m: number;
-    duration_s: number;
   } | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -268,18 +272,24 @@ export default function Home() {
   const handleGenerate = async () => {
     let lat = latitude;
     let lng = longitude;
-    
+
     // If no location, get it first
     if (!lat || !lng) {
       setIsGenerating(true);
       try {
-        const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 });
-        });
+        const position = await new Promise<GeolocationPosition>(
+          (resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              timeout: 10000,
+            });
+          }
+        );
         lat = position.coords.latitude;
         lng = position.coords.longitude;
         setManualLocation(lat, lng);
-        setSearchValue(`Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+        setSearchValue(
+          `Current Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+        );
       } catch (err) {
         setError("Could not get location. Please enter an address.");
         setIsGenerating(false);
@@ -309,14 +319,20 @@ export default function Home() {
 
       setGeneratedRoute(result.route);
       setGeneratedSvg(result.svg_path);
+      setInputPrompt(result.input_prompt || null);
+      setRotationDeg(result.rotation_deg ?? 0);
+      console.log("Backend rotation_deg:", result.rotation_deg);
       setRouteStats({
         distance_m: result.distance_m,
-        duration_s: result.duration_s,
       });
       setShowModal(false);
     } catch (err) {
       console.error("Generation failed:", err);
-      setError(err instanceof Error ? err.message : "Failed to generate route. Try a different location or shape.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to generate route. Try a different location or shape."
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -385,11 +401,11 @@ export default function Home() {
     if (resizeTimeoutRef.current) {
       clearTimeout(resizeTimeoutRef.current);
     }
-    
+
     // Store previous state for revert
     const prevRoute = generatedRoute;
     const prevStats = routeStats;
-    
+
     // Debounce: wait 300ms after last drag before calling API
     resizeTimeoutRef.current = setTimeout(async () => {
       // Use routeCenter if set, otherwise fall back to input location
@@ -436,13 +452,19 @@ export default function Home() {
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
+        setInputPrompt(result.input_prompt || null);
+        setRotationDeg(result.rotation_deg ?? 0);
+        console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
           distance_m: result.distance_m,
-          duration_s: result.duration_s,
         });
       } catch (err) {
         console.error("Resize failed:", err);
-        setError(err instanceof Error ? err.message : "Failed to resize route. The area may not have enough roads.");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to resize route. The area may not have enough roads."
+        );
         // Revert to previous state
         setAspectRatio(previousAspectRatioRef.current);
         setGeneratedRoute(prevRoute);
@@ -455,24 +477,28 @@ export default function Home() {
 
   // Handle move - regenerate route at new location (does NOT update orange dot)
   const moveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const previousRouteCenterRef = useRef<{ lat: number; lng: number } | null>(null);
-  
+  const previousRouteCenterRef = useRef<{ lat: number; lng: number } | null>(
+    null
+  );
+
   const handleMove = (newLat: number, newLng: number) => {
     // Store previous route center for revert on error
-    previousRouteCenterRef.current = routeCenter ?? (latitude && longitude ? { lat: latitude, lng: longitude } : null);
-    
+    previousRouteCenterRef.current =
+      routeCenter ??
+      (latitude && longitude ? { lat: latitude, lng: longitude } : null);
+
     // Update route center (does NOT affect orange dot or search value)
     setRouteCenter({ lat: newLat, lng: newLng });
-    
+
     // Clear previous timeout
     if (moveTimeoutRef.current) {
       clearTimeout(moveTimeoutRef.current);
     }
-    
+
     // Store previous state for revert
     const prevRoute = generatedRoute;
     const prevStats = routeStats;
-    
+
     // Debounce: wait 300ms before calling API
     moveTimeoutRef.current = setTimeout(async () => {
       setIsGenerating(true);
@@ -495,13 +521,19 @@ export default function Home() {
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
+        setInputPrompt(result.input_prompt || null);
+        setRotationDeg(result.rotation_deg ?? 0);
+        console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
           distance_m: result.distance_m,
-          duration_s: result.duration_s,
         });
       } catch (err) {
         console.error("Move failed:", err);
-        setError(err instanceof Error ? err.message : "Failed to move route. The area may not have enough roads.");
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to move route. The area may not have enough roads."
+        );
         // Revert to previous state
         setRouteCenter(previousRouteCenterRef.current);
         setGeneratedRoute(prevRoute);
@@ -563,6 +595,7 @@ export default function Home() {
                 setShowModal(true);
                 setGeneratedRoute(null);
                 setGeneratedSvg(null);
+                setInputPrompt(null);
                 setRouteStats(null);
                 setError(null);
                 setAspectRatio(1.0);
@@ -635,6 +668,7 @@ export default function Home() {
             isResizing={isGenerating}
             svgPath={generatedSvg}
             showOverlay={showOverlay}
+            rotationDeg={rotationDeg}
           />
           {showModal && (
             <div
@@ -1036,49 +1070,7 @@ export default function Home() {
                 />
               </div>
 
-              {/* Target Pace (for Runner Mode) */}
-              <div style={{ marginBottom: 24 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginBottom: 8,
-                  }}
-                >
-                  <Text strong style={{ color: STRAVA_DARK }}>
-                    Target Pace:
-                  </Text>
-                  <Text strong style={{ color: STRAVA_ORANGE }}>
-                    {Math.floor(targetPace)}:
-                    {String(Math.round((targetPace % 1) * 60)).padStart(2, "0")}{" "}
-                    /km
-                  </Text>
-                </div>
-                <Slider
-                  min={3}
-                  max={15}
-                  step={0.25}
-                  value={targetPace}
-                  onChange={setTargetPace}
-                  tooltip={{
-                    formatter: (val) =>
-                      `${Math.floor(val!)}:${String(
-                        Math.round((val! % 1) * 60)
-                      ).padStart(2, "0")} /km`,
-                  }}
-                  marks={{
-                    3: "3:00",
-                    6: "6:00",
-                    9: "9:00",
-                    12: "12:00",
-                    15: "15:00",
-                  }}
-                  styles={{
-                    track: { background: STRAVA_ORANGE },
-                    rail: { background: "#eee" },
-                  }}
-                />
-              </div>
+              {/* Target Pace Removed */}
 
               {/* Error Alert */}
               {error && (
@@ -1235,8 +1227,15 @@ export default function Home() {
                 Your Route is Ready! 🎉
               </Title>
 
-              {/* Stats Row with Description */}
-              <div style={{ display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" }}>
+              {/* Stats Row */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: 24,
+                  marginBottom: 20,
+                  flexWrap: "wrap",
+                }}
+              >
                 <div>
                   <Text
                     style={{ fontSize: 11, color: "#888", display: "block" }}
@@ -1258,56 +1257,25 @@ export default function Home() {
                   <Text
                     style={{ fontSize: 11, color: "#888", display: "block" }}
                   >
-                    Est. Time
-                  </Text>
-                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    {routeStats
-                      ? (() => {
-                          const mins = Math.round(
-                            (routeStats.distance_m / 1000) * targetPace
-                          );
-                          const h = Math.floor(mins / 60);
-                          const m = mins % 60;
-                          return h > 0 ? `${h}h ${m}min` : `${m} min`;
-                        })()
-                      : "--"}
-                  </Text>
-                </div>
-                <div>
-                  <Text
-                    style={{ fontSize: 11, color: "#888", display: "block" }}
-                  >
-                    Pace
-                  </Text>
-                  <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    {Math.floor(targetPace)}:
-                    {String(Math.round((targetPace % 1) * 60)).padStart(2, "0")}{" "}
-                    /km
-                  </Text>
-                </div>
-                <div>
-                  <Text
-                    style={{ fontSize: 11, color: "#888", display: "block" }}
-                  >
                     Shape
                   </Text>
                   <Text strong style={{ fontSize: 18, color: STRAVA_DARK }}>
-                    {prompt || selectedShape || "Custom Shape"}
+                    {inputPrompt || prompt || selectedShape || "Custom Shape"}
                   </Text>
                 </div>
               </div>
 
               {/* Overlay Toggle */}
-              <div 
-                style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  gap: 8, 
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
                   marginBottom: 16,
                   padding: "8px 12px",
                   background: "#f5f5f5",
                   borderRadius: 8,
-                  cursor: "pointer"
+                  cursor: "pointer",
                 }}
                 onClick={() => setShowOverlay(!showOverlay)}
               >
@@ -1352,7 +1320,11 @@ export default function Home() {
                       });
                     } catch (err) {
                       console.error("Export failed:", err);
-                      setError(err instanceof Error ? err.message : "Failed to export GPX file.");
+                      setError(
+                        err instanceof Error
+                          ? err.message
+                          : "Failed to export GPX file."
+                      );
                     } finally {
                       setIsExporting(false);
                     }
@@ -1367,6 +1339,7 @@ export default function Home() {
                     setShowModal(true);
                     setGeneratedRoute(null);
                     setGeneratedSvg(null);
+                    setInputPrompt(null);
                   }}
                 >
                   Create New Route
