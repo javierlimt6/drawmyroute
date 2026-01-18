@@ -322,7 +322,7 @@ export default function Home() {
 
       setGeneratedRoute(result.route);
       setGeneratedSvg(result.svg_path);
-      setInputPrompt(result.input_prompt || null);
+      setInputPrompt(result.shape_name || null);
       setRotationDeg(result.rotation_deg ?? 0);
       console.log("Backend rotation_deg:", result.rotation_deg);
       setRouteStats({
@@ -450,7 +450,7 @@ export default function Home() {
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
-        setInputPrompt(result.input_prompt || null);
+        setInputPrompt(result.shape_name || null);
         setRotationDeg(result.rotation_deg ?? 0);
         console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
@@ -524,7 +524,7 @@ export default function Home() {
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
         setGeneratedSvg(result.svg_path);
-        setInputPrompt(result.input_prompt || null);
+        setInputPrompt(result.shape_name || null);
         setRotationDeg(result.rotation_deg ?? 0);
         console.log("Backend rotation_deg:", result.rotation_deg);
         setRouteStats({
