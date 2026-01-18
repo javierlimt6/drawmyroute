@@ -53,13 +53,17 @@ def scale_to_gps(
     width = max_x - min_x
     height = max_y - min_y
     
-    # Avoid division by zero
-    if width == 0: width = 1
-    if height == 0: height = 1
+    # Determine max dimension to preserve aspect ratio
+    max_dim = max(width, height)
+    if max_dim == 0: max_dim = 1
     
-    # Normalize to -0.5 to 0.5 range (centered on origin)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    
+    # Normalize centered on origin, scaling by the largest dimension
+    # This ensures a shape fits within a 1x1 box but keeps its proportions
     normalized = [
-        ((p[0] - min_x) / width - 0.5, (p[1] - min_y) / height - 0.5)
+        ((p[0] - center_x) / max_dim, (p[1] - center_y) / max_dim)
         for p in points
     ]
     
