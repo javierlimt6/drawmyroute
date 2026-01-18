@@ -88,10 +88,10 @@ def _get_best_icon_match(prompt: str) -> str | None:
     
     if not top_indices:
         print(f"⚠️ Vector search found no candidates for '{prompt}'")
-        # Fallback to DALL-E directly? Or return None to let caller handle fallback.
         return None
         
     candidates = [SEMANTIC_INDEX[i] for i in top_indices]
+    top_fallback = candidates[0]['name'].lower() if candidates else None
     
     # 2. Narrow Re-Ranking (LLM)
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -99,12 +99,13 @@ def _get_best_icon_match(prompt: str) -> str | None:
     candidate_context = "\n".join([f"- {c['name']} (Tags: {', '.join(c.get('tags', []))})" for c in candidates])
     
     sys_prompt = f"""
-    Pick the BEST icon name from the list below for the user query.
+    Analyze the user query and the list of icon candidates below.
+    Your goal is to select the single BEST match that represents the query.
     
     Rules:
-    1. ONLY return the exact name. No markdown, no quotes.
-    2. If no reasonable match exists, return 'NONE'.
-    3. Prefer exact semantic matches (e.g. "dog" for "pup").
+    1. You MUST select an icon if there is any reasonable semantic connection (e.g., 'puppy' -> 'dog', 'running' -> 'shoe').
+    2. ONLY return 'NONE' if the candidates are completely irrelevant to the query.
+    3. Return ONLY the exact icon name. No markdown, no quotes.
     
     Candidates:
     {candidate_context}
@@ -129,10 +130,20 @@ def _get_best_icon_match(prompt: str) -> str | None:
         
         if match != "none" and match in DATA_STORE:
             return match
+        
+        # Fallback: If LLM says NONE, use the top vector search result as a safety net
+        # effectively handling "unless really cannot" by trusting vector search relevance
+        if top_fallback and top_fallback in DATA_STORE:
+            print(f"🔄 LLM returned NONE, falling back to top vector result: '{top_fallback}'")
+            return top_fallback
             
         return None
     except Exception as e:
         print(f"⚠️ Retrieval failed: {e}")
+        # Fallback to top vector result on error
+        if top_fallback and top_fallback in DATA_STORE:
+            print(f"🔄 Retrieval error, falling back to top vector result: '{top_fallback}'")
+            return top_fallback
         return None
 
 def _generate_with_dalle(prompt: str) -> str:
