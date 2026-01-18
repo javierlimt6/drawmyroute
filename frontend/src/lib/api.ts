@@ -1,5 +1,12 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export interface Bounds {
+  min_lat: number;
+  max_lat: number;
+  min_lng: number;
+  max_lng: number;
+}
+
 export interface RouteRequest {
   shape_id?: string;
   prompt?: string;
@@ -10,8 +17,7 @@ export interface RouteRequest {
   distance_km: number;
   aspect_ratio?: number;  // >1 = taller, <1 = wider (0.25-4.0)
   fast_mode?: boolean;    // Skip multi-variant optimization for faster resize
-  adaptive_resize?: boolean;  // Enable adaptive height calculation for width changes
-  width_ratio?: number;   // How much width changed (>1 = wider)
+  target_bounds?: Bounds; // If set, route fits EXACTLY in this box (authoritative)
 }
 
 export interface RouteResponse {

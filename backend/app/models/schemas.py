@@ -1,6 +1,15 @@
 from pydantic import BaseModel, model_validator
 from typing import Optional
 
+
+class Bounds(BaseModel):
+    """GPS bounding box - the user's authoritative box dimensions."""
+    min_lat: float
+    max_lat: float
+    min_lng: float
+    max_lng: float
+
+
 class RouteRequest(BaseModel):
     shape_id: Optional[str] = None
     prompt: Optional[str] = None
@@ -11,8 +20,8 @@ class RouteRequest(BaseModel):
     distance_km: float
     aspect_ratio: float = 1.0  # >1 = taller, <1 = wider (range: 0.25-4.0)
     fast_mode: bool = False     # Skip multi-variant optimization for faster resize
-    adaptive_resize: bool = False  # Enable adaptive height calculation for width changes
-    width_ratio: Optional[float] = None  # How much width changed (>1 = wider)
+    # New: authoritative box dimensions (replaces adaptive_resize/width_ratio)
+    target_bounds: Optional[Bounds] = None  # If set, route scales to fit EXACTLY in this box
 
     @model_validator(mode='after')
     def check_shape_source(self):
@@ -27,12 +36,19 @@ class RouteResponse(BaseModel):
     shape_name: str
     input_prompt: Optional[str] = None
     svg_path: str
-    original_points: list[tuple[float, float]]
+    original_points: list[tuple[float, float]] = []
     gps_points: list[tuple[float, float]]
     route: dict  # GeoJSON LineString
     distance_m: float
     rotation_deg: float = 0
-    duration_s: float
+    duration_s: float = 0
+    # New fields from unified algorithm
+    algorithm: str = "iterative-scaling"
+    score: float = 0
+    scale_factor: float = 1.0
+    approach_distance_m: float = 0
+    return_distance_m: float = 0
+    total_with_travel_m: float = 0
 
 
 class SuggestRequest(BaseModel):

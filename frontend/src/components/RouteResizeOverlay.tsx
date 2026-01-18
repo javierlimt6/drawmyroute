@@ -5,15 +5,17 @@ import React, { useState, useCallback, useEffect } from "react";
 const OVERLAY_BLACK = "#1a1a1a";
 const MOVE_DARK = "#333333";
 
+interface Bounds {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+}
+
 interface RouteResizeOverlayProps {
-  bounds: {
-    minLng: number;
-    maxLng: number;
-    minLat: number;
-    maxLat: number;
-  } | null;
+  bounds: Bounds | null;
   mapRef: mapboxgl.Map | null;
-  onResize: (ratio: number, dimension: "width" | "height") => void;
+  onResize: (newBounds: Bounds) => void;  // Now sends exact GPS bounds
   onMove?: (newLat: number, newLng: number) => void;
   disabled?: boolean;
   svgPath?: string | null;
@@ -157,18 +159,21 @@ export default function RouteResizeOverlay({
           const newCenter = mapRef.unproject([centerX, centerY]);
           onMove(newCenter.lat, newCenter.lng);
         } else {
-          // Differentiate between width and height drags
-          if (dragEdge === "left" || dragEdge === "right") {
-            // Width drag: send width ratio for adaptive resize
-            const widthRatio = screenBounds.width / initialBounds.width;
-            onResize(widthRatio, "width");
-          } else {
-            // Height drag: send aspect ratio change
-            const originalAspect = initialBounds.height / initialBounds.width;
-            const newAspect = screenBounds.height / screenBounds.width;
-            const aspectRatioChange = newAspect / originalAspect;
-            onResize(aspectRatioChange, "height");
-          }
+          // Convert screen bounds to GPS bounds (authoritative box dimensions)
+          const topLeft = mapRef.unproject([screenBounds.left, screenBounds.top]);
+          const bottomRight = mapRef.unproject([
+            screenBounds.left + screenBounds.width,
+            screenBounds.top + screenBounds.height,
+          ]);
+          
+          const newBounds: Bounds = {
+            minLat: bottomRight.lat,  // bottom = lower latitude
+            maxLat: topLeft.lat,      // top = higher latitude 
+            minLng: topLeft.lng,      // left = lower longitude
+            maxLng: bottomRight.lng,  // right = higher longitude
+          };
+          
+          onResize(newBounds);
         }
       }
 

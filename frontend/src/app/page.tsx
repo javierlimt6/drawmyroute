@@ -41,6 +41,9 @@ const { TextArea } = Input;
 const STRAVA_ORANGE = "#FC4C02";
 const STRAVA_DARK = "#1A1A1A";
 
+// Feature toggles
+const SHOW_QUICK_SELECT_SHAPES = false; // Set to false to hide quick select shapes
+
 type InputMode = "type" | "draw" | "text" | "image";
 
 interface PredefinedShape {
@@ -149,7 +152,7 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [textInput, setTextInput] = useState("");  // Text mode input (e.g., "NUS", "67")
   const [selectedShape, setSelectedShape] = useState<string | null>(null);
-  const [distance, setDistance] = useState(10); // Always stored in km
+  const [distance, setDistance] = useState(25); // Always stored in km
   const [unit, setUnit] = useState<"km" | "mi">("km");
   // targetPace removed
   const [searchValue, setSearchValue] = useState("");
@@ -374,11 +377,20 @@ export default function Home() {
 
       setGeneratedRoute(result.route);
       setGeneratedSvg(result.svg_path);
-      setPrompt(result.shape_name);  // Update prompt with suggested shape name
-      setSelectedShape(null);  // Clear predefined shape selection
+      setInputPrompt(result.shape_name || null);  // Store for display
+      setRotationDeg(result.rotation_deg ?? 0);
+      
+      // CRITICAL: Store svg_path and set mode to 'image' so move/resize uses the same SVG
+      setImageSvgPath(result.svg_path);
+      setMode("image");
+      
+      // Clear other inputs to prevent them from overriding on move/resize
+      setTextInput("");
+      setPrompt("");
+      setSelectedShape(null);
+      
       setRouteStats({
         distance_m: result.distance_m,
-        duration_s: result.duration_s,
       });
       setShowModal(false);
     } catch (err) {
@@ -391,12 +403,16 @@ export default function Home() {
 
   // Debounced resize - only triggers API after user stops dragging
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const previousAspectRatioRef = useRef<number>(1.0);
   
-  const handleResize = (ratio: number, dimension: "width" | "height") => {
-    // Store previous aspect ratio for revert on error
-    previousAspectRatioRef.current = aspectRatio;
-    
+  // Bounds type for resize
+  interface ResizeBounds {
+    minLat: number;
+    maxLat: number;
+    minLng: number;
+    maxLng: number;
+  }
+  
+  const handleResize = (newBounds: ResizeBounds) => {
     // Clear previous timeout
     if (resizeTimeoutRef.current) {
       clearTimeout(resizeTimeoutRef.current);
@@ -408,19 +424,20 @@ export default function Home() {
 
     // Debounce: wait 300ms after last drag before calling API
     resizeTimeoutRef.current = setTimeout(async () => {
-      // Use routeCenter if set, otherwise fall back to input location
-      const centerLat = routeCenter?.lat ?? latitude;
-      const centerLng = routeCenter?.lng ?? longitude;
-      if (!centerLat || !centerLng) return;
-
       setIsGenerating(true);
       try {
-        // Build request based on dimension type
-        const basePayload = {
-          start_lat: centerLat,
-          start_lng: centerLng,
-          distance_km: distance,
+        // Build request with target_bounds (authoritative box dimensions)
+        const requestPayload = {
+          start_lat: (newBounds.minLat + newBounds.maxLat) / 2,  // Center for fallback
+          start_lng: (newBounds.minLng + newBounds.maxLng) / 2,
+          distance_km: distance,  // Used for point count estimation
           fast_mode: true,  // Use fast mode for resize
+          target_bounds: {
+            min_lat: newBounds.minLat,
+            max_lat: newBounds.maxLat,
+            min_lng: newBounds.minLng,
+            max_lng: newBounds.maxLng,
+          },
           ...(mode === "image" && imageSvgPath
             ? { image_svg_path: imageSvgPath }
             : mode === "type" && prompt.trim()
@@ -429,25 +446,6 @@ export default function Home() {
             ? { text: textInput.trim() }
             : { shape_id: selectedShape || "heart" }),
         };
-
-        let requestPayload;
-        if (dimension === "width") {
-          // Width drag: use adaptive resize to maximize height within 1.3x distance
-          requestPayload = {
-            ...basePayload,
-            aspect_ratio: aspectRatio,  // Current aspect (backend will compute optimal)
-            adaptive_resize: true,
-            width_ratio: ratio,
-          };
-        } else {
-          // Height drag: direct aspect ratio update
-          const newAspectRatio = Math.max(0.25, Math.min(4.0, aspectRatio * ratio));
-          setAspectRatio(newAspectRatio);
-          requestPayload = {
-            ...basePayload,
-            aspect_ratio: newAspectRatio,
-          };
-        }
 
         const result = await generateRoute(requestPayload);
         setGeneratedRoute(result.route);
@@ -458,6 +456,12 @@ export default function Home() {
         setRouteStats({
           distance_m: result.distance_m,
         });
+        
+        // Update route center to bounds center
+        setRouteCenter({
+          lat: (newBounds.minLat + newBounds.maxLat) / 2,
+          lng: (newBounds.minLng + newBounds.maxLng) / 2,
+        });
       } catch (err) {
         console.error("Resize failed:", err);
         setError(
@@ -466,7 +470,6 @@ export default function Home() {
             : "Failed to resize route. The area may not have enough roads."
         );
         // Revert to previous state
-        setAspectRatio(previousAspectRatioRef.current);
         setGeneratedRoute(prevRoute);
         setRouteStats(prevStats);
       } finally {
@@ -659,7 +662,7 @@ export default function Home() {
         </div>
 
         {/* Map with overlay */}
-        <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        <div style={{ position: "relative", width: "100%", height: "100%", paddingTop: 48 }}>
           <MapComponent
             route={generatedRoute}
             center={longitude && latitude ? [longitude, latitude] : undefined}
@@ -771,6 +774,8 @@ export default function Home() {
               </div>
 
               {/* Predefined Shapes Selector */}
+              {SHOW_QUICK_SELECT_SHAPES && (
+              <>
               <div style={{ marginBottom: 16 }}>
                 <Text
                   strong
@@ -851,21 +856,23 @@ export default function Home() {
                 </Text>
                 <div style={{ flex: 1, height: 1, background: "#eee" }} />
               </div>
+              </>
+              )}
 
               {/* Mode Toggle */}
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(4, 1fr)",
+                  gridTemplateColumns: "repeat(3, 1fr)",
                   gap: 8,
                   marginBottom: 8,
                 }}
               >
                 {[
                   { value: "type", icon: <FontSizeOutlined />, label: "Prompt" },
-                  { value: "draw", icon: <EditOutlined />, label: "Draw" },
-                  { value: "text", icon: <FontSizeOutlined />, label: "Text" },
                   { value: "image", icon: <PictureOutlined />, label: "Upload" },
+                  { value: "text", icon: <FontSizeOutlined />, label: "Text" },
+                  // { value: "draw", icon: <EditOutlined />, label: "Draw" },  // Coming soon
                 ].map((option) => (
                   <div
                     key={option.value}
@@ -1101,18 +1108,18 @@ export default function Home() {
                   textTransform: "uppercase",
                   letterSpacing: 1,
                   background:
-                    ((mode === "type" && prompt.trim()) || mode === "draw") &&
+                    ((mode === "type" && prompt.trim()) || (mode === "text" && textInput.trim()) || (mode === "image" && imageSvgPath) || mode === "draw") &&
                     !isGenerating
                       ? STRAVA_ORANGE
                       : "#f0f0f0",
                   color:
-                    ((mode === "type" && prompt.trim()) || mode === "draw") &&
+                    ((mode === "type" && prompt.trim()) || (mode === "text" && textInput.trim()) || (mode === "image" && imageSvgPath) || mode === "draw") &&
                     !isGenerating
                       ? "#fff"
                       : "#999",
                   border: "none",
                   boxShadow:
-                    ((mode === "type" && prompt.trim()) || mode === "draw") &&
+                    ((mode === "type" && prompt.trim()) || (mode === "text" && textInput.trim()) || (mode === "image" && imageSvgPath) || mode === "draw") &&
                     !isGenerating
                       ? `0 4px 12px ${STRAVA_ORANGE}40`
                       : "none",
@@ -1144,7 +1151,7 @@ export default function Home() {
                   boxShadow: isSuggesting ? "none" : "0 4px 12px rgba(102, 126, 234, 0.4)",
                 }}
               >
-                {isSuggesting ? "Finding best shape..." : "✨ Suggest Route"}
+                {isSuggesting ? "Finding best shape..." : "✨ AI SUGGEST ROUTE"}
               </Button>
             </Card>
           </div>

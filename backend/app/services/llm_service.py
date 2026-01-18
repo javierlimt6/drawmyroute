@@ -11,7 +11,7 @@ from app.utils.embeddings import search_vector_index
 CACHE_PATH = Path(__file__).parent.parent / "data" / "prompt_cache.json"
 DATA_DIR = Path(__file__).parent.parent / "data"
 SEMANTIC_INDEX_PATH = DATA_DIR / "semantic_index.json"
-DATA_STORE_PATH = DATA_DIR / "data_store.json"
+DATA_STORE_PATH = DATA_DIR / "paths.json"
 
 # Load Assets on Startup
 SEMANTIC_INDEX = []
@@ -40,6 +40,53 @@ def _save_cache(cache: dict):
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CACHE_PATH, "w") as f:
         json.dump(cache, f, indent=2)
+
+def _scale_24_to_100(svg_d: str) -> str:
+    """
+    Scale SVG path from 0-24 coordinate system (Material Design Icons)
+    to 0-100 coordinate system (frontend overlay expects).
+    Preserves 0 and 1 as integers for arc command flags.
+    """
+    import re
+    scale = 100 / 24
+    
+    result = []
+    i = 0
+    
+    while i < len(svg_d):
+        char = svg_d[i]
+        
+        if char.isalpha():
+            result.append(char)
+            i += 1
+        elif char in ' ,\t\n':
+            result.append(char)
+            i += 1
+        elif char == '-' or char.isdigit() or char == '.':
+            j = i
+            if svg_d[j] == '-':
+                j += 1
+            while j < len(svg_d) and (svg_d[j].isdigit() or svg_d[j] == '.'):
+                j += 1
+            num_str = svg_d[i:j]
+            try:
+                num = float(num_str)
+                # Keep 0 and 1 as integers (for arc flags)
+                if num == 0:
+                    result.append("0")
+                elif num == 1:
+                    result.append("1")
+                else:
+                    scaled = num * scale
+                    result.append(f"{scaled:.1f}")
+            except ValueError:
+                result.append(num_str)
+            i = j
+        else:
+            result.append(char)
+            i += 1
+    
+    return ''.join(result)
 
 def points_to_svg(points: list[list[float]]) -> str:
     """Convert list of [x,y] to SVG path string."""
@@ -191,6 +238,9 @@ def generate_svg_from_prompt(prompt: str, distance_km: float = 5.0) -> str:
     if icon_name:
         print(f"🎯 Found Icon Match: '{icon_name}'")
         svg_d = DATA_STORE[icon_name]
+        
+        # Scale from 0-24 to 0-100 coordinate system
+        svg_d = _scale_24_to_100(svg_d)
         
         # Ensure closure
         if "z" not in svg_d.lower():

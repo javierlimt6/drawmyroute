@@ -12,10 +12,19 @@ from PIL import Image
 from potrace import Bitmap, POTRACE_TURNPOLICY_MINORITY
 
 
+def is_svg_file(file_bytes: bytes) -> bool:
+    """Check if file is an SVG."""
+    try:
+        content = file_bytes.decode('utf-8', errors='ignore')
+        return '<svg' in content.lower()
+    except Exception:
+        return False
+
+
 def parse_svg_file(file_bytes: bytes) -> str | None:
     """
     Parse SVG file and extract path data directly.
-    Returns the first valid path 'd' attribute, or None if not an SVG.
+    Returns the first valid path 'd' attribute, or None if not an SVG or no paths found.
     """
     try:
         content = file_bytes.decode('utf-8', errors='ignore')
@@ -37,6 +46,51 @@ def parse_svg_file(file_bytes: bytes) -> str | None:
         return None
     except Exception:
         return None
+
+
+def rasterize_svg(file_bytes: bytes) -> bytes:
+    """
+    Convert SVG to PNG bytes for Potrace processing.
+    Uses cairosvg if available, falls back to basic PIL conversion.
+    """
+    try:
+        import cairosvg
+        # Convert SVG to PNG using cairosvg
+        png_bytes = cairosvg.svg2png(bytestring=file_bytes, output_width=800, output_height=800)
+        print("🔄 Rasterized SVG using cairosvg")
+        return png_bytes
+    except ImportError:
+        # cairosvg not available, try a simpler approach
+        # Create a white background with black rendering
+        try:
+            from PIL import Image
+            from io import BytesIO
+            import xml.etree.ElementTree as ET
+            
+            # Try to parse and render basic SVG shapes
+            content = file_bytes.decode('utf-8', errors='ignore')
+            root = ET.fromstring(content)
+            
+            # Get viewBox or width/height
+            viewBox = root.get('viewBox', '0 0 100 100')
+            parts = viewBox.split()
+            if len(parts) >= 4:
+                vb_width, vb_height = float(parts[2]), float(parts[3])
+            else:
+                vb_width, vb_height = 100, 100
+            
+            # Create image (we'll use a simple threshold-based approach)
+            # Since we can't easily render SVG without cairosvg,
+            # we'll raise an informative error
+            raise ValueError(
+                "This SVG doesn't contain extractable <path> elements. "
+                "Install cairosvg for full SVG support: pip install cairosvg"
+            )
+        except Exception as e:
+            raise ValueError(
+                f"Could not process SVG without <path> elements. "
+                f"Install cairosvg for full SVG support: pip install cairosvg. Error: {e}"
+            )
 
 
 def normalize_svg_path(path_d: str) -> str:
@@ -289,12 +343,32 @@ def image_to_svg_path(file_bytes: bytes) -> str:
     """
     Main entry point: Convert image bytes to SVG path string.
     Handles SVG files (direct parsing) and raster images (Potrace vectorization).
+    
+    For SVG files without <path> elements, attempts to rasterize and process.
     """
-    # First, try to parse as SVG file
+    # First, try to parse as SVG file with path elements
     svg_path = parse_svg_file(file_bytes)
     if svg_path:
         print("📄 Parsed SVG file directly")
         return svg_path
+    
+    # Check if it's an SVG without path elements
+    if is_svg_file(file_bytes):
+        print("📄 SVG file detected but no <path> elements found, rasterizing...")
+        try:
+            # Try to rasterize the SVG to PNG first
+            png_bytes = rasterize_svg(file_bytes)
+            binary, orig_shape = preprocess_image(png_bytes)
+            path = trace_with_potrace(binary)
+            svg_path = curves_to_svg_path(path)
+            return svg_path
+        except Exception as e:
+            # If rasterization fails, give a helpful error
+            raise ValueError(
+                f"SVG file has no extractable <path> elements and could not be rasterized. "
+                f"Try exporting as PNG instead, or ensure your SVG contains <path> elements. "
+                f"Details: {e}"
+            )
     
     # Otherwise, process as raster image with Potrace
     print("🖼️ Processing raster image with Potrace...")

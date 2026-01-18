@@ -1,4 +1,5 @@
 import math
+from . import routing_config as cfg
 
 
 def calculate_perimeter(points: list[tuple[float, float]]) -> float:
@@ -79,12 +80,9 @@ def scale_to_gps(
         abstract_perimeter = 4.0  # Assume square-like
     
     # --- STEP 4: Calculate scale to match target distance ---
-    # Road detour factor: roads typically add 50-70% to straight-line perimeter
-    # Increased from 1.3 to 1.6 after testing showed routes running too long
-    ROAD_DETOUR_FACTOR = 1.6
-    
+    # Use centralized road detour factor from config
     # We want: scaled_perimeter_km * ROAD_DETOUR_FACTOR ≈ distance_km
-    target_perimeter_km = distance_km / ROAD_DETOUR_FACTOR
+    target_perimeter_km = distance_km / cfg.ROAD_DETOUR_FACTOR
     
     # Scale factor: how many km per unit of normalized perimeter
     km_per_unit = target_perimeter_km / abstract_perimeter
@@ -110,5 +108,75 @@ def scale_to_gps(
         lat_offset = -ny * scale_y_km * deg_per_km_lat
         lng_offset = nx * scale_x_km * deg_per_km_lng
         gps_points.append((start_lat + lat_offset, start_lng + lng_offset))
+    
+    return gps_points
+
+
+def scale_to_bounds(
+    points: list[tuple[float, float]],
+    min_lat: float,
+    max_lat: float,
+    min_lng: float,
+    max_lng: float,
+    rotation_deg: float = 0.0,
+) -> list[tuple[float, float]]:
+    """
+    Scale abstract shape points to fit EXACTLY within the specified GPS bounds.
+    
+    This is the authoritative scaling function - the resulting points will fill
+    the bounding box exactly. The user's box dimensions are respected without
+    any recalculation or "optimization".
+    
+    Args:
+        points: Abstract shape points (any coordinate system)
+        min_lat, max_lat, min_lng, max_lng: Target GPS bounding box
+        rotation_deg: Rotation angle in degrees
+    
+    Returns:
+        List of (lat, lng) GPS coordinates that fit exactly in the bounds
+    """
+    # --- STEP 1: Normalize points to 0-1 range ---
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    src_min_x, src_max_x = min(xs), max(xs)
+    src_min_y, src_max_y = min(ys), max(ys)
+    
+    src_width = src_max_x - src_min_x
+    src_height = src_max_y - src_min_y
+    
+    # Avoid division by zero
+    if src_width == 0: src_width = 1
+    if src_height == 0: src_height = 1
+    
+    # Normalize to 0-1 range
+    normalized = [
+        ((p[0] - src_min_x) / src_width, (p[1] - src_min_y) / src_height)
+        for p in points
+    ]
+    
+    # --- STEP 2: Apply rotation if specified (around center) ---
+    if rotation_deg != 0:
+        rad = math.radians(rotation_deg)
+        cos_r, sin_r = math.cos(rad), math.sin(rad)
+        # Center at 0.5, 0.5
+        normalized = [
+            (
+                0.5 + (nx - 0.5) * cos_r - (ny - 0.5) * sin_r,
+                0.5 + (nx - 0.5) * sin_r + (ny - 0.5) * cos_r
+            )
+            for nx, ny in normalized
+        ]
+    
+    # --- STEP 3: Map directly to target GPS bounds ---
+    # Note: SVG Y increases downward, latitude increases upward, so we invert Y
+    lat_range = max_lat - min_lat
+    lng_range = max_lng - min_lng
+    
+    gps_points = []
+    for nx, ny in normalized:
+        # Invert Y: ny=0 -> max_lat, ny=1 -> min_lat
+        lat = max_lat - ny * lat_range
+        lng = min_lng + nx * lng_range
+        gps_points.append((lat, lng))
     
     return gps_points
