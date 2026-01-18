@@ -2,7 +2,8 @@
 Suggest Service - Auto-suggest best routes from the shape database
 """
 import asyncio
-from app.services.data_store_service import get_random_shapes
+import random
+from app.services.data_store_service import get_shape_by_name
 from app.services.svg_parser import sample_svg_path
 from app.services.geo_scaler import scale_to_gps
 from app.services.osrm_router import snap_to_roads_osrm
@@ -132,14 +133,34 @@ async def suggest_best_route(
     Try multiple shapes and return the one with the best score.
     
     Algorithm:
-    1. Get random shapes from data_store.json
+    1. Select random shapes from CURATED WHITELIST (toilet + presets)
     2. Generate routes for each in parallel
     3. Return the route with highest score + alternatives tried
     """
-    print(f"🎲 [Auto-Suggest] Evaluating {num_candidates} random shapes...")
     
-    # Get random shapes from data store
-    candidate_shapes = get_random_shapes(num_candidates)
+    # Curated Whitelist
+    WHITELIST = [
+        "heart", "star", "triangle", "sixty7", 
+        "figure8", "lightning", "merlion", 
+        "banana", "snowflake", "thumbsup", "sword", "toilet"
+    ]
+    
+    # Get shape data for all items in whitelist
+    all_candidates = []
+    for name in WHITELIST:
+        svg = get_shape_by_name(name)
+        if svg:
+            all_candidates.append((name, svg))
+        else:
+            print(f"   ⚠️ Shape '{name}' not found in data store")
+            
+    # Sample if we have more than requested, otherwise use all
+    if len(all_candidates) > num_candidates:
+        candidate_shapes = random.sample(all_candidates, num_candidates)
+    else:
+        candidate_shapes = all_candidates
+        
+    print(f"🎲 [Auto-Suggest] Evaluating {len(candidate_shapes)} shapes from whitelist...")
     
     # Evaluate all candidates in parallel
     tasks = [

@@ -6,16 +6,32 @@ import random
 from pathlib import Path
 
 DATA_STORE_PATH = Path(__file__).parent.parent / "data" / "data_store.json"
+MATERIAL_STORE_PATH = Path(__file__).parent.parent / "data" / "material_store.json"
 
 _data_store_cache: dict | None = None
 
 
 def load_data_store() -> dict:
-    """Load all SVG paths from data_store.json (cached)."""
+    """Load and merge all SVG paths from data stores."""
     global _data_store_cache
     if _data_store_cache is None:
+        # Load main store (Lucide + Presets)
         with open(DATA_STORE_PATH) as f:
-            _data_store_cache = json.load(f)
+            main_store = json.load(f)
+            
+        # Load material store (Google Material Icons)
+        material_store = {}
+        if MATERIAL_STORE_PATH.exists():
+            try:
+                with open(MATERIAL_STORE_PATH) as f:
+                    material_store = json.load(f)
+            except Exception as e:
+                print(f"⚠️ Failed to load material_store.json: {e}")
+        
+        # Merge: Main store takes precedence for name collisions
+        _data_store_cache = {**material_store, **main_store}
+        print(f"📚 Data Store Loaded: {len(_data_store_cache)} icons (Main: {len(main_store)}, Material: {len(material_store)})")
+        
     return _data_store_cache
 
 

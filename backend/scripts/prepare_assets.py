@@ -34,10 +34,25 @@ def normalize_points(points):
     xs = [x for x, y in points]
     ys = [y for x, y in points]
     if not xs or not ys: return points
+    
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
-    def norm(x, min_, max_): return ((x - min_) / (max_ - min_)) * 100 if max_ > min_ else 50
-    return [(norm(x, min_x, max_x), norm(y, min_y, max_y)) for x, y in points]
+    
+    width = max_x - min_x
+    height = max_y - min_y
+    max_dim = max(width, height)
+    
+    if max_dim == 0: return [(50.0, 50.0) for _ in points]
+    
+    scale = 100.0 / max_dim
+    center_x = (min_x + max_x) / 2.0
+    center_y = (min_y + max_y) / 2.0
+    
+    # Scale and center in 100x100 box
+    return [
+        ((x - center_x) * scale + 50.0, (y - center_y) * scale + 50.0)
+        for x, y in points
+    ]
 
 def normalize_svg_path(svg_d):
     try:
@@ -134,6 +149,43 @@ def run_extraction():
             except Exception as e:
                 # print(f"Skipping {name}: {e}")
                 pass
+
+    # 3. Load Predefined Shapes from shapes.json
+    # These should take priority or supplement the icons
+    SHAPES_PATH = DATA_DIR / "shapes.json"
+    if SHAPES_PATH.exists():
+        print("🎨 Loading predefined shapes from shapes.json...")
+        try:
+            with open(SHAPES_PATH) as f:
+                shapes = json.load(f)
+                for key, data in shapes.items():
+                    raw_svg = data["svg_path"]
+                    # Normalize consistent with our logic (preserve aspect ratio)
+                    norm_d = normalize_svg_path(raw_svg)
+                    
+                    if norm_d:
+                        # Overwrite/Add to data_store
+                        data_store[key] = norm_d
+                        
+                        # Add to semantic index for searchability
+                        # Check if already exists (from Lucide) to avoid duplicates
+                        existing_idx = next((i for i, item in enumerate(semantic_index) if item["name"] == key), None)
+                        
+                        entry = {
+                            "name": key, 
+                            "tags": [data["name"], "predefined", "shape", "classic"]
+                        }
+                        
+                        if existing_idx is not None:
+                            semantic_index[existing_idx] = entry # Replace Lucide entry with our custom one
+                        else:
+                            semantic_index.append(entry)
+                            
+                        print(f"   ➕ Added/Updated shape: {key}")
+                    else:
+                        print(f"   ⚠️ Failed to normalize shape: {key}")
+        except Exception as e:
+            print(f"❌ Failed to load shapes.json: {e}")
 
     # Save the files
     DATA_DIR.mkdir(parents=True, exist_ok=True)
